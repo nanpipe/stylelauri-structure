@@ -39,6 +39,50 @@ class SLO_Order_Balance {
 
 		// Boton "Marcar saldo como pagado" del panel del pedido.
 		add_action( 'admin_post_' . self::PAY_ACTION, array( __CLASS__, 'handle_mark_saldo_paid' ) );
+
+		// Filas de abonos/saldo en la tabla de totales del pedido: se ven
+		// en los correos de WooCommerce y en la pagina "pedido recibido" /
+		// "mi cuenta" del cliente, SIN tocar el total real del pedido.
+		add_filter( 'woocommerce_get_order_item_totals', array( __CLASS__, 'add_abono_total_rows' ), 20, 2 );
+	}
+
+	/**
+	 * Agrega cada abono (con su fecha) y el saldo pendiente como filas
+	 * informativas al final de la tabla de totales. Es la forma correcta
+	 * de mostrarlos en correos: un fee positivo "de cuota" INFLARIA el
+	 * total del pedido.
+	 *
+	 * @param array    $rows  Filas existentes (subtotal, envio, total...).
+	 * @param WC_Order $order Pedido.
+	 * @return array
+	 */
+	public static function add_abono_total_rows( $rows, $order ) {
+		if ( ! self::has_abono_data( $order ) ) {
+			return $rows;
+		}
+
+		$abonos      = self::get_abonos( $order );
+		$date_format = get_option( 'date_format' );
+
+		foreach ( $abonos as $i => $abono ) {
+			$label = self::origen_label( $abono['origen'] );
+
+			if ( ! empty( $abono['fecha'] ) ) {
+				$label .= ' — ' . date_i18n( $date_format, strtotime( $abono['fecha'] ) );
+			}
+
+			$rows[ 'slo_abono_' . $i ] = array(
+				'label' => $label . ':',
+				'value' => wc_price( (float) $abono['monto'], array( 'currency' => $order->get_currency() ) ),
+			);
+		}
+
+		$rows['slo_saldo'] = array(
+			'label' => __( 'Saldo pendiente:', 'stylelauri-order-flow' ),
+			'value' => wc_price( self::get_saldo_pendiente( $order ), array( 'currency' => $order->get_currency() ) ),
+		);
+
+		return $rows;
 	}
 
 	/**
@@ -206,11 +250,10 @@ class SLO_Order_Balance {
 	 * @param WC_Order $order Pedido que se esta editando.
 	 */
 	public static function render_balance_field( $order ) {
-		$abonado   = (float) $order->get_meta( self::META_ABONADO );
-		$abonos    = self::get_abonos( $order );
-		$descuento = (float) $order->get_meta( self::META_DESCUENTO );
-		$saldo     = self::get_saldo_pendiente( $order );
-		$guia      = $order->get_meta( self::META_GUIA );
+		$abonado = (float) $order->get_meta( self::META_ABONADO );
+		$abonos  = self::get_abonos( $order );
+		$saldo   = self::get_saldo_pendiente( $order );
+		$guia    = $order->get_meta( self::META_GUIA );
 
 		$date_format = get_option( 'date_format' );
 		?>
@@ -253,18 +296,10 @@ class SLO_Order_Balance {
 
 			<p class="description" style="margin-bottom:8px;">
 				<?php
-				if ( $descuento > 0 ) {
-					printf(
-						/* translators: 1: real order total, 2: deferred amount */
-						esc_html__( 'Pedido con Abono Reserva del checkout. Valor real de la venta: %1$s (el total de WooCommerce esta rebajado por el abono; quedaron diferidos %2$s).', 'stylelauri-order-flow' ),
-						wp_kses_post( wc_price( self::get_total_real( $order ) ) ),
-						wp_kses_post( wc_price( $descuento ) )
-					);
-					echo '<br />';
-				}
 				printf(
-					/* translators: 1: total paid, 2: formatted balance amount */
-					esc_html__( 'Total abonado: %1$s · Saldo pendiente: %2$s', 'stylelauri-order-flow' ),
+					/* translators: 1: real order total, 2: total paid, 3: formatted balance amount */
+					esc_html__( 'Venta: %1$s · Abonado: %2$s · Saldo: %3$s', 'stylelauri-order-flow' ),
+					wp_kses_post( wc_price( self::get_total_real( $order ) ) ),
 					wp_kses_post( wc_price( $abonado ) ),
 					wp_kses_post( wc_price( $saldo ) )
 				);
@@ -479,7 +514,7 @@ class SLO_Order_Balance {
 			&& $saldo > 0
 			&& class_exists( 'SLO_Dispatch_Gate' )
 			&& SLO_Dispatch_Gate::is_enabled()
-			&& in_array( $old_status, array( $produccion_status, $listo_status, $enviado_status ), true ) ) {
+			&& in_array( $old_status, array_filter( array( $produccion_status, $listo_status, $enviado_status ) ), true ) ) {
 			$order->set_status( $old_status );
 			$order->add_order_note(
 				sprintf(

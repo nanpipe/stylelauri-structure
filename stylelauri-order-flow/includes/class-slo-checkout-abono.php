@@ -319,7 +319,7 @@ class SLO_Checkout_Abono {
 			return;
 		}
 
-		if ( SLO_Order_Balance::get_saldo_pendiente( $order ) <= 0 ) {
+		if ( SLO_Order_Balance::get_saldo_pendiente( $order ) <= 0 || ! SLO_Order_Statuses::is_mapped( 'abono' ) ) {
 			return;
 		}
 

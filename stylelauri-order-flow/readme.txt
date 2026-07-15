@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y notificaciones segun metodo de envio.
@@ -56,6 +56,11 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3): activacion, taxonomia, snapshot multi-lote, fecha gobernante, guard de saldo, supresion de emails en reversiones, emails con guia y placeholders. Queda pendiente la prueba visual del listado de pedidos (columnas/filtro) y el flujo de checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.4.0 =
+* Cambio grande: el plugin YA NO crea estados de pedido. Los estados los administra la tienda (con su propio plugin de estados); en StyleLauri > Ajustes solo se indica que estado cumple cada ROL del flujo (abono / produccion / preparacion-listo / enviado). Un rol "Sin asignar" desactiva sus automatismos sin romper nada. Los estados wc-slo-* desaparecen: si habia pedidos en esos estados, moverlos a los nuevos antes de actualizar.
+* Nuevo: los abonos aparecen como filas informativas en la tabla de totales del pedido (correos de WooCommerce, pagina "pedido recibido" y "mi cuenta"), con fecha, mas la fila de "Saldo pendiente". NO se tocan los totales reales: un fee positivo tipo "cuota" inflaria el total del pedido (asi paso en la prueba manual: total quedo en 110.000 en vez de 60.000).
+* Cambio: el panel de abonos del pedido queda compacto (historial + Venta/Abonado/Saldo en una linea + boton Abonar + guia); el detalle largo se elimino. El registro de cada abono sigue quedando como nota del pedido.
 
 = 1.3.0 =
 * Fix: el saldo pendiente solo aplica a pedidos que participan del sistema de abonos (con abono registrado o Abono Reserva del checkout). Antes, un pedido normal pagado completo daba saldo = total (nadie habia registrado abonos) y el guard podia bloquear su paso a "Enviado". Tambien corrige la contraentrega.

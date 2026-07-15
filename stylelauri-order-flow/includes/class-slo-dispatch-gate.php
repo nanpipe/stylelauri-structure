@@ -70,10 +70,11 @@ class SLO_Dispatch_Gate {
 	 * @param WC_Order $order      Pedido.
 	 */
 	public static function route_on_status_change( $order_id, $old_status, $new_status, $order ) {
-		// Registrar que el pedido ya paso por "Listo": es la senal de que
-		// su lote llego y esta fisicamente despachable. Se marca siempre,
-		// este o no activa la puerta (dato barato, util para reportes).
-		if ( SLO_Order_Statuses::get_status( 'listo' ) === $new_status ) {
+		// Registrar que el pedido ya paso por "Listo/Preparacion": es la
+		// senal de que su lote llego y esta fisicamente despachable.
+		$listo_status = SLO_Order_Statuses::get_status( 'listo' );
+
+		if ( '' !== $listo_status && $listo_status === $new_status ) {
 			$order->update_meta_data( self::META_PASO_LISTO, '1' );
 			$order->save();
 		}
@@ -87,13 +88,20 @@ class SLO_Dispatch_Gate {
 		// estado interno es una decision del admin y se respeta.
 		$abono_status = SLO_Order_Statuses::get_status( 'abono' );
 
-		if ( ! in_array( $old_status, array( 'pending', 'on-hold', 'failed', $abono_status ), true ) ) {
+		$payment_origins = array( 'pending', 'on-hold', 'failed' );
+		if ( '' !== $abono_status ) {
+			$payment_origins[] = $abono_status;
+		}
+
+		if ( ! in_array( $old_status, $payment_origins, true ) ) {
 			return;
 		}
 
 		$saldo = SLO_Order_Balance::get_saldo_pendiente( $order );
 
-		if ( $saldo > 0 ) {
+		// Con saldo pendiente el pedido no debe quedar despachable; solo
+		// se puede reubicar si el rol "abono" tiene un estado asignado.
+		if ( $saldo > 0 && '' !== $abono_status ) {
 			$order->update_status(
 				$abono_status,
 				__( 'Puerta de despacho: pago parcial recibido, queda saldo pendiente. El pedido no entra a Procesando hasta estar pagado y despachable.', 'stylelauri-order-flow' )
@@ -101,7 +109,9 @@ class SLO_Dispatch_Gate {
 			return;
 		}
 
-		if ( SLO_Order_Snapshot::order_is_preventa( $order ) && '1' !== $order->get_meta( self::META_PASO_LISTO ) ) {
+		if ( SLO_Order_Snapshot::order_is_preventa( $order )
+			&& '1' !== $order->get_meta( self::META_PASO_LISTO )
+			&& SLO_Order_Statuses::is_mapped( 'produccion' ) ) {
 			$order->update_status(
 				SLO_Order_Statuses::get_status( 'produccion' ),
 				__( 'Puerta de despacho: preventa pagada, pasa a produccion. Entrara a Procesando cuando el lote este listo para despachar.', 'stylelauri-order-flow' )
@@ -121,7 +131,7 @@ class SLO_Dispatch_Gate {
 	 * @param WC_Order $order Pedido con saldo recien saldado.
 	 */
 	public static function maybe_advance_to_processing( $order ) {
-		if ( ! self::is_enabled() ) {
+		if ( ! self::is_enabled() || ! SLO_Order_Statuses::is_mapped( 'listo' ) ) {
 			return;
 		}
 

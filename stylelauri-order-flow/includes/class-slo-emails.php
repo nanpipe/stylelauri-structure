@@ -3,7 +3,7 @@
  * Orquestador de notificaciones.
  *
  * Regla del proyecto: se notifica SOLO en los cambios que le importan al
- * cliente (ver SLO_Order_Statuses::customer_facing_statuses()); los
+ * cliente (los estados mapeados a los roles "abono" y "enviado"); los
  * movimientos internos (produccion, listo) son silenciosos salvo cuando
  * "listo" dispara el recordatorio de saldo.
  *

@@ -216,9 +216,9 @@ class SLO_Settings {
 		);
 
 		// Mapeo de roles del ciclo de vida a estados de pedido. Vacio =
-		// usar el estado por defecto del plugin. Solo se aceptan keys de
+		// rol desactivado (sin automatismos). Solo se aceptan keys de
 		// estado validas ('wc-...').
-		foreach ( array_keys( SLO_Order_Statuses::default_map() ) as $role ) {
+		foreach ( SLO_Order_Statuses::roles() as $role ) {
 			register_setting(
 				'slo_settings_group',
 				'slo_status_' . $role,
@@ -235,23 +235,13 @@ class SLO_Settings {
 	}
 
 	/**
-	 * Opciones para los dropdowns de estado: todos los estados que WC
-	 * conoce, mas los del plugin (que pueden no estar registrados si su
-	 * rol fue remapeado -- deben seguir apareciendo para poder volver).
+	 * Opciones para los dropdowns de estado: todos los estados que la
+	 * tienda tiene registrados (nativos + los creados por la tienda).
 	 *
 	 * @return array<string,string> key wc-... => label.
 	 */
 	private static function status_choices() {
-		$choices = wc_get_order_statuses();
-		$labels  = SLO_Order_Statuses::role_labels();
-
-		foreach ( SLO_Order_Statuses::default_map() as $role => $key ) {
-			if ( ! isset( $choices[ $key ] ) ) {
-				$choices[ $key ] = $labels[ $role ] . ' ' . __( '(del plugin)', 'stylelauri-order-flow' );
-			}
-		}
-
-		return $choices;
+		return wc_get_order_statuses();
 	}
 
 	public static function render_settings_page() {
@@ -340,42 +330,38 @@ class SLO_Settings {
 					</tr>
 				</table>
 
-				<h2><?php esc_html_e( 'Estados del pedido', 'stylelauri-order-flow' ); ?></h2>
+				<h2><?php esc_html_e( 'Estados del pedido (roles)', 'stylelauri-order-flow' ); ?></h2>
 				<p class="description" style="max-width:640px;">
-					<?php esc_html_e( 'El plugin trabaja con cuatro roles del ciclo de vida. Cada rol puede usar el estado que trae el plugin o mapearse a un estado que ya exista en la tienda (por ejemplo, si ya tienes estados con sus propios correos). Cuando un rol se mapea a un estado existente, el estado del plugin desaparece del dropdown de pedidos: no se acumulan estados de mas.', 'stylelauri-order-flow' ); ?>
+					<?php esc_html_e( 'El plugin NO crea estados: los estados los administra la tienda. Aqui se le indica al plugin que estado cumple cada rol del flujo. Un rol "Sin asignar" desactiva sus automatismos (correo, bloqueo, transicion) sin romper nada.', 'stylelauri-order-flow' ); ?>
 				</p>
 				<p class="description" style="max-width:640px;">
-					<strong><?php esc_html_e( 'Antes de remapear un rol:', 'stylelauri-order-flow' ); ?></strong>
-					<?php esc_html_e( 'mueve los pedidos que esten en el estado del plugin hacia el nuevo estado (el estado viejo dejara de mostrarse y esos pedidos quedarian con un estado huerfano). Y si el estado elegido ya envia su propio correo, revisa WooCommerce > Ajustes > Correos para no notificar dos veces.', 'stylelauri-order-flow' ); ?>
+					<?php esc_html_e( 'Si el estado elegido ya envia su propio correo, revisa WooCommerce > Ajustes > Correos para no notificar dos veces.', 'stylelauri-order-flow' ); ?>
 				</p>
 
 				<table class="form-table" role="presentation">
 					<?php
 					$role_help = array(
-						'abono'      => __( 'Pago parcial recibido, falta saldo. Dispara el correo de "Abono recibido".', 'stylelauri-order-flow' ),
-						'produccion' => __( 'El lote esta en produccion. Interno: no notifica al cliente.', 'stylelauri-order-flow' ),
-						'listo'      => __( 'Listo para despacho/retiro. Interno; dispara el recordatorio de saldo si falta plata.', 'stylelauri-order-flow' ),
-						'enviado'    => __( 'Despachado. Dispara el correo de "Enviado" y esta bloqueado mientras haya saldo pendiente.', 'stylelauri-order-flow' ),
+						'abono'      => __( 'Pago parcial recibido, falta saldo. Dispara el correo de "Abono recibido"; la puerta de despacho manda aqui los pagos con saldo.', 'stylelauri-order-flow' ),
+						'produccion' => __( 'Preventa esperando su lote (reserva). Interno: no notifica al cliente; la puerta de despacho manda aqui las preventas pagadas.', 'stylelauri-order-flow' ),
+						'listo'      => __( 'Preparacion/empaque, lote ya disponible. Dispara el recordatorio de saldo si falta plata; al quedar saldo 0 avanza solo a Procesando.', 'stylelauri-order-flow' ),
+						'enviado'    => __( 'Despachado. Dispara el correo de "Enviado" (con guia) y esta bloqueado mientras haya saldo pendiente.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :
 						$option_name = 'slo_status_' . $role;
-						$stored      = get_option( $option_name, '' );
 						$current     = SLO_Order_Statuses::get_status_key( $role );
 						?>
 						<tr>
 							<th scope="row"><label for="<?php echo esc_attr( $option_name ); ?>"><?php echo esc_html( $label ); ?></label></th>
 							<td>
 								<select name="<?php echo esc_attr( $option_name ); ?>" id="<?php echo esc_attr( $option_name ); ?>">
+									<option value="" <?php selected( '', $current ); ?>><?php esc_html_e( '— Sin asignar —', 'stylelauri-order-flow' ); ?></option>
 									<?php foreach ( self::status_choices() as $key => $status_label ) : ?>
 										<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $current, $key ); ?>>
 											<?php echo esc_html( $status_label ); ?>
 										</option>
 									<?php endforeach; ?>
 								</select>
-								<?php if ( '' === $stored || SLO_Order_Statuses::uses_default( $role ) ) : ?>
-									<span class="description"> <?php esc_html_e( '(estado del plugin)', 'stylelauri-order-flow' ); ?></span>
-								<?php endif; ?>
 								<p class="description"><?php echo esc_html( $role_help[ $role ] ); ?></p>
 							</td>
 						</tr>

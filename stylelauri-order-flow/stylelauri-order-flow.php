@@ -3,7 +3,7 @@
  * Plugin Name:       StyleLauri Order Flow
  * Plugin URI:        https://stylelauri.com/
  * Description:       Organiza el ciclo de vida de pedidos de StyleLauri: lotes de preventa, fechas de despacho, saldos por abono y notificaciones segun metodo de envio. Requiere WooCommerce con HPOS activo.
- * Version:           1.3.0
+ * Version:           1.4.0
  * Requires at least: 6.4
  * Requires PHP:      7.4
  * Author:            StyleLauri
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'SLO_VERSION', '1.3.0' );
+define( 'SLO_VERSION', '1.4.0' );
 define( 'SLO_PLUGIN_FILE', __FILE__ );
 define( 'SLO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SLO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
