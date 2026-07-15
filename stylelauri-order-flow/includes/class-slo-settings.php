@@ -335,16 +335,16 @@ class SLO_Settings {
 					<?php esc_html_e( 'El plugin NO crea estados: los estados los administra la tienda. Aqui se le indica al plugin que estado cumple cada rol del flujo. Un rol "Sin asignar" desactiva sus automatismos (correo, bloqueo, transicion) sin romper nada.', 'stylelauri-order-flow' ); ?>
 				</p>
 				<p class="description" style="max-width:640px;">
-					<?php esc_html_e( 'Si el estado elegido ya envia su propio correo, revisa WooCommerce > Ajustes > Correos para no notificar dos veces.', 'stylelauri-order-flow' ); ?>
+					<?php esc_html_e( 'Los correos los maneja la tienda (plugin de estados + YAYMail). Este plugin solo aporta los datos: abonos y saldo salen como filas en la tabla de totales de todo correo, y como metadatos del pedido (_slo_saldo_pendiente, _slo_fecha_despacho, _slo_guia_envio, _slo_monto_abonado) insertables en las plantillas.', 'stylelauri-order-flow' ); ?>
 				</p>
 
 				<table class="form-table" role="presentation">
 					<?php
 					$role_help = array(
-						'abono'      => __( 'Pago parcial recibido, falta saldo. Dispara el correo de "Abono recibido"; la puerta de despacho manda aqui los pagos con saldo.', 'stylelauri-order-flow' ),
-						'produccion' => __( 'Preventa esperando su lote (reserva). Interno: no notifica al cliente; la puerta de despacho manda aqui las preventas pagadas.', 'stylelauri-order-flow' ),
-						'listo'      => __( 'Preparacion/empaque, lote ya disponible. Dispara el recordatorio de saldo si falta plata; al quedar saldo 0 avanza solo a Procesando.', 'stylelauri-order-flow' ),
-						'enviado'    => __( 'Despachado. Dispara el correo de "Enviado" (con guia) y esta bloqueado mientras haya saldo pendiente.', 'stylelauri-order-flow' ),
+						'abono'      => __( 'Pago parcial recibido, falta saldo. La puerta de despacho manda aqui los pagos con saldo pendiente.', 'stylelauri-order-flow' ),
+						'produccion' => __( 'Preventa esperando su lote (reserva). La puerta de despacho manda aqui las preventas pagadas.', 'stylelauri-order-flow' ),
+						'listo'      => __( 'Preparacion/empaque, lote ya disponible. Bloqueado hacia Procesando mientras haya saldo; al quedar saldo 0 avanza solo a Procesando (Merch Lista).', 'stylelauri-order-flow' ),
+						'enviado'    => __( 'Etapa de despacho (opcional). Bloqueada mientras haya saldo pendiente y congela el snapshot de lote/fecha. Si manejas el despacho aparte, dejala sin asignar.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :

@@ -119,23 +119,28 @@ SLO_Order_Snapshot::recompute_snapshot( $o2->get_id() );
 $o2 = wc_get_order( $o2->get_id() );
 slo_check( 'stock-only order: no lotes, no fecha', array() === SLO_Order_Snapshot::get_order_lotes( $o2 ) && '' === SLO_Order_Snapshot::get_order_fecha_despacho( $o2 ) );
 
-// ---- 4. Abono email on mapped abono status ----
+// ---- 4. Plugin sends NO emails of its own (YAYMail/status plugin owns mail) ----
+slo_check( 'plugin email classes NOT registered', ! isset( WC()->mailer()->get_emails()['WC_Email_SLO_Abono'] ) && ! class_exists( 'WC_Email_SLO_Enviado' ) );
+
 slo_mail_reset();
 $order->update_meta_data( '_slo_monto_abonado', 50 ); // total = 200
 $order->save();
 $order->update_status( 'st-abono' );
-$subjects = slo_mail_subjects();
-slo_check( 'abono email sent on mapped abono status', 1 === count( $subjects ) && false !== stripos( $subjects[0], 'abono' ), implode( ' | ', $subjects ) );
-slo_check( 'subject placeholder replaced', 1 === count( $subjects ) && false === strpos( $subjects[0], '{order_number}' ) && false !== strpos( $subjects[0], (string) $oid ), $subjects[0] ?? '' );
+slo_check( 'no plugin email on abono transition', 0 === count( slo_mail_subjects() ), implode( ' | ', slo_mail_subjects() ) );
 
 $saldo = SLO_Order_Balance::get_saldo_pendiente( $order );
 slo_check( 'saldo pendiente = 150', 150.0 === $saldo, (string) $saldo );
 
-// ---- 5. Reminder on mapped listo, block on mapped enviado ----
+// ---- 5. Reminder HOOK on mapped listo, block on mapped enviado ----
+global $slo_reminder_fired;
+$slo_reminder_fired = 0;
+add_action( 'slo_saldo_reminder', function () {
+	$GLOBALS['slo_reminder_fired']++;
+} );
 slo_mail_reset();
 $order->update_status( 'st-prep' );
-$subjects = slo_mail_subjects();
-slo_check( 'saldo reminder on mapped listo (Preparacion)', 1 === count( $subjects ) && false !== stripos( $subjects[0], 'saldo' ), implode( ' | ', $subjects ) );
+slo_check( 'slo_saldo_reminder hook fires on mapped listo', 1 === $GLOBALS['slo_reminder_fired'], (string) $GLOBALS['slo_reminder_fired'] );
+slo_check( 'no plugin email on listo transition', 0 === count( slo_mail_subjects() ) );
 
 slo_mail_reset();
 $order->update_status( 'st-enviado' );
@@ -149,23 +154,18 @@ $order->update_status( 'processing' );
 $order = wc_get_order( $oid );
 slo_check( 'manual listo->processing blocked with saldo', 'st-prep' === $order->get_status(), $order->get_status() );
 
-// ---- 6. Pay saldo -> auto-advance to processing, then enviado email with guia ----
+// ---- 6. Pay saldo -> auto-advance to processing; saldo meta persisted ----
 $order->update_meta_data( '_slo_guia_envio', 'GUIA-XYZ-123' );
 $order->save();
-slo_mail_reset();
 SLO_Order_Balance::mark_saldo_paid( $oid ); // registers ledger entry, saldo 0
 $order = wc_get_order( $oid );
 slo_check( 'saldo 0 auto-advances listo -> processing', 'processing' === $order->get_status(), $order->get_status() );
+slo_check( 'saldo meta persisted for YAYMail (_slo_saldo_pendiente = 0)', '0' === (string) (float) $order->get_meta( '_slo_saldo_pendiente' ), (string) $order->get_meta( '_slo_saldo_pendiente' ) );
+slo_check( 'guia meta available for templates', 'GUIA-XYZ-123' === $order->get_meta( '_slo_guia_envio' ) );
 
-slo_mail_reset();
 $order->update_status( 'st-enviado' );
 $order = wc_get_order( $oid );
-$subjects = slo_mail_subjects();
-global $slo_mail;
-$body = count( $slo_mail ) ? ( is_array( $slo_mail[0]['message'] ) ? implode( '', $slo_mail[0]['message'] ) : $slo_mail[0]['message'] ) : '';
 slo_check( 'enviado passes with saldo 0', 'st-enviado' === $order->get_status(), $order->get_status() );
-slo_check( 'enviado email sent on mapped status', 1 === count( $subjects ), implode( ' | ', $subjects ) );
-slo_check( 'enviado email contains guia', false !== strpos( $body, 'GUIA-XYZ-123' ) );
 
 // ---- 7. Snapshot locked on mapped enviado ----
 $before = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
@@ -303,9 +303,8 @@ $redirect = SLO_Order_Admin_Columns::handle_bulk_action( 'http://x/wp-admin/admi
 $o5 = wc_get_order( $o5->get_id() );
 slo_check( 'bulk recompute: snapshot backfilled', $o5->meta_exists( SLO_Order_Snapshot::META_LOTES ) && 1 === count( SLO_Order_Snapshot::get_order_lotes( $o5 ) ) );
 
-// ---- 13. Email classes registered ----
-$emails = WC()->mailer()->get_emails();
-slo_check( 'custom email classes registered', isset( $emails['WC_Email_SLO_Abono'], $emails['WC_Email_SLO_Saldo_Reminder'], $emails['WC_Email_SLO_Enviado'] ) );
+// ---- 13. Saldo meta stays in sync through ledger changes ----
+slo_check( 'saldo meta synced after abonos (o6: 200-90=110)', 110.0 === (float) $o6->get_meta( '_slo_saldo_pendiente' ), (string) $o6->get_meta( '_slo_saldo_pendiente' ) );
 
 // ---- Cleanup mapping options (leave demo site as-was) ----
 delete_option( 'slo_status_abono' );

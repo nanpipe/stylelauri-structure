@@ -3,10 +3,10 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 License: GPLv2 or later
 
-Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y notificaciones segun metodo de envio.
+Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
 
 == Description ==
 
@@ -18,13 +18,13 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 
 2. **Snapshot en el pedido**. Al hacer checkout (o editar un pedido), se calcula que lotes toca ese pedido y la fecha de despacho MAS TARDIA entre ellos. Esa fecha es la que se comunica al cliente y la que bloquea el paso a "Enviado". Si el pedido mezcla stock inmediato + preventa, sigue apareciendo en el filtro de produccion de cada lote que toca.
 
-3. **Estados de ciclo de vida limpios**. Se agregan los estados "Abono parcial", "En produccion", "Listo para despacho/retiro" y "Enviado", separados de metodo de envio y de lote (que ya no son estados).
+3. **Roles de ciclo de vida SIN estados propios**. La tienda crea sus estados (Abono produccion, Preventa, Preparacion, Abono Pendiente, Merch Lista...); en StyleLauri > Ajustes se indica que estado cumple cada rol del flujo (abono / produccion / listo / enviado). Un rol sin asignar desactiva sus automatismos.
 
 4. **Columnas y filtro por lote** en el listado de pedidos (funciona con HPOS y con el listado legacy). Se puede filtrar "todos los pedidos del lote JK-Agosto" sin importar en que estado esten.
 
 5. **Saldo por abono**. Campo de "monto abonado" dentro del panel de datos del pedido; el saldo pendiente se calcula solo. El pedido NO puede pasar a "Enviado" mientras tenga saldo pendiente -- si se intenta, se revierte automaticamente al estado anterior con una nota explicando por que.
 
-6. **Emails**. Se notifica al cliente solo en los cambios que le importan (Abono, Enviado, recordatorio de saldo); los movimientos internos (Produccion, Listo) son silenciosos. El email de "Enviado" es UNO SOLO, cuyo contenido se ramifica automaticamente segun el metodo de envio nativo de WooCommerce (domicilio / retiro / contraentrega) -- ya no hace falta un estado por metodo de envio.
+6. **Datos para los correos (sin correos propios)**. Los correos los maneja la tienda (plugin de estados + YAYMail). Este plugin aporta: filas de abonos y saldo pendiente en la tabla de totales de TODO correo de WooCommerce, y metadatos insertables en plantillas (_slo_saldo_pendiente, _slo_monto_abonado, _slo_fecha_despacho, _slo_guia_envio, _slo_lotes_pedido). Ademas expone el hook 'slo_saldo_reminder' cuando un pedido entra a Preparacion con saldo.
 
 7. **Abono Reserva en el checkout**. Si el carrito tiene productos de preventa (con lote asignado), aparece un checkbox para pagar solo un porcentaje HOY (configurable, por defecto 50%). El resto queda como saldo pendiente en el pedido: el pedido pasa solo a "Abono parcial" al confirmarse el pago, el saldo alimenta el guard de "Enviado" y el recordatorio, y el email nativo de "Procesando" se suprime para no duplicar avisos. Requiere el checkout clasico (shortcode); el Checkout Block no ejecuta estos hooks.
 
@@ -45,17 +45,21 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 2. Ve a Productos > Lotes de preventa y crea un termino por campana (ej. "JK-Agosto"), con su fecha de cierre y de despacho.
 3. En cada producto de preventa, asigna el lote correspondiente en la caja de "Lotes de preventa" (igual que Categorias). Los productos de stock inmediato no llevan ningun lote.
 4. Los pedidos nuevos calculan su lote y fecha automaticamente. Revisa las columnas "Lote(s)" y "Despacho" en WooCommerce > Pedidos, y filtra por lote con el dropdown de arriba del listado.
-5. Cuando un pedido tenga abono, registra el monto en el campo "Monto abonado (reserva)" dentro del pedido. Para envios a domicilio, registra el "Numero de guia" en el mismo panel ANTES de pasar el pedido a "Enviado" -- se incluye automaticamente en el correo.
-6. En WooCommerce > Ajustes > Emails apareceran tres emails nuevos (Abono recibido, Recordatorio de saldo, Enviado) -- se pueden activar/desactivar y editar el asunto/encabezado igual que cualquier email nativo de WooCommerce.
+5. Registra abonos con el boton "Abonar" del panel del pedido (quedan en el historial con fecha y usuario). El "Numero de guia" se guarda en el mismo panel y queda disponible como metadato para las plantillas de YAYMail.
+6. En StyleLauri > Ajustes, mapea tus estados a los cuatro roles del flujo y configura el porcentaje del Abono Reserva.
 
 == Pendiente / siguientes pasos sugeridos ==
 
-* Confirmar en el sitio real los titulos exactos de los metodos de envio (Domicilio/Retiro/Contraentrega) -- el plugin los detecta por palabras clave (`retiro`, `contra`, `domicilio`/`envio`) y expone el filtro `slo_delivery_type` para ajustarlo si algun titulo no matchea.
-* Exportador: agregar las columnas de lote/fecha/saldo al exportador propio de la tienda usando `SLO_Order_Snapshot::get_order_lotes()`, `get_order_fecha_despacho()` y `SLO_Order_Balance::get_saldo_pendiente()`.
+* Exportador: agregar las columnas de lote/fecha/saldo al exportador propio de la tienda usando `SLO_Order_Snapshot::get_order_lotes()`, `get_order_fecha_despacho()` y `SLO_Order_Balance::get_saldo_pendiente()` (o el meta `_slo_saldo_pendiente`).
 * Politica de carrito mixto (stock inmediato + preventa en el mismo pedido): el plugin ya soporta el escenario tecnicamente (fecha gobernante = la mas tardia), pero falta decidir si se permite mezclar en el carrito o se separa en el checkout.
-* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3): activacion, taxonomia, snapshot multi-lote, fecha gobernante, guard de saldo, supresion de emails en reversiones, emails con guia y placeholders. Queda pendiente la prueba visual del listado de pedidos (columnas/filtro) y el flujo de checkout real en staging de Hostinger antes de produccion.
+* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.5.0 =
+* Cambio: se eliminan los tres correos propios del plugin (Abono recibido, Recordatorio de saldo, Enviado). Los correos los maneja la tienda con su plugin de estados + YAYMail. El plugin sigue aportando: filas de abonos/saldo en la tabla de totales de todo correo, metadatos insertables en plantillas y el hook 'slo_saldo_reminder'.
+* Nuevo: el saldo pendiente se persiste como meta del pedido (_slo_saldo_pendiente), refrescado con cada abono, para poder insertarlo en plantillas de YAYMail. La logica interna sigue usando el calculo en vivo.
+* Ajustes: textos de los roles actualizados (sin menciones a correos del plugin); rol "enviado" documentado como opcional si el despacho se maneja aparte.
 
 = 1.4.0 =
 * Cambio grande: el plugin YA NO crea estados de pedido. Los estados los administra la tienda (con su propio plugin de estados); en StyleLauri > Ajustes solo se indica que estado cumple cada ROL del flujo (abono / produccion / preparacion-listo / enviado). Un rol "Sin asignar" desactiva sus automatismos sin romper nada. Los estados wc-slo-* desaparecen: si habia pedidos en esos estados, moverlos a los nuevos antes de actualizar.

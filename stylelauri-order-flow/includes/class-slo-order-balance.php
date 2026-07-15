@@ -8,9 +8,9 @@
  *  1. Admin marca el pedido como "Abono parcial" y registra cuanto pago
  *     el cliente en el campo que este modulo agrega al panel de datos
  *     del pedido.
- *  2. Cuando el lote pasa a "Listo", se dispara 'slo_saldo_reminder'
- *     para cualquier pedido de ese lote que aun tenga saldo -- el
- *     modulo de emails (SLO_Emails) escucha esa accion.
+ *  2. Cuando el pedido entra al estado del rol "listo" con saldo, se
+ *     dispara la accion 'slo_saldo_reminder' -- hook de extension (los
+ *     correos los maneja la tienda con su plugin de estados + YAYMail).
  *  3. El pedido NO puede quedar en "Enviado" mientras tenga saldo > 0:
  *     si alguien intenta ese cambio, se revierte automaticamente al
  *     estado anterior con una nota interna explicando por que.
@@ -28,6 +28,11 @@ class SLO_Order_Balance {
 	const META_ABONOS    = '_slo_abonos';
 	const META_DESCUENTO = '_slo_descuento_abono';
 	const META_GUIA      = '_slo_guia_envio';
+	// Copia PERSISTIDA del saldo, para que YAYMail (y cualquier editor de
+	// correos que inserta meta del pedido) pueda mostrarla. La fuente de
+	// verdad para la logica sigue siendo get_saldo_pendiente() (calculada);
+	// esta copia se refresca en cada cambio de abonos.
+	const META_SALDO = '_slo_saldo_pendiente';
 
 	const PAY_ACTION = 'slo_marcar_saldo_pagado';
 
@@ -201,6 +206,7 @@ class SLO_Order_Balance {
 
 		$order->update_meta_data( self::META_ABONOS, $abonos );
 		$order->update_meta_data( self::META_ABONADO, wc_format_decimal( $total ) );
+		$order->update_meta_data( self::META_SALDO, wc_format_decimal( max( 0.0, self::get_total_real( $order ) - $total ) ) );
 
 		if ( $note ) {
 			$order->add_order_note(

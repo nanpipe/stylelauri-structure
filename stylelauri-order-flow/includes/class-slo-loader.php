@@ -27,7 +27,6 @@ class SLO_Loader {
 		SLO_Order_Balance::init();
 		SLO_Dispatch_Gate::init();
 		SLO_Checkout_Abono::init();
-		SLO_Emails::init();
 	}
 
 	/**
@@ -46,6 +45,5 @@ class SLO_Loader {
 		require_once $includes . 'class-slo-order-balance.php';
 		require_once $includes . 'class-slo-dispatch-gate.php';
 		require_once $includes . 'class-slo-checkout-abono.php';
-		require_once $includes . 'class-slo-emails.php';
 	}
 }
