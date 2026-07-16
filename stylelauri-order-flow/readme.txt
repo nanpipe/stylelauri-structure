@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.8.0
+Stable tag: 1.9.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,13 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.9.0 =
+* MODELO DE CUOTAS: el saldo ya no vive en un historial paralelo de meta -- se deriva del pedido mismo: saldo = fee del Abono Reserva (diferido) - suma de las lineas "... de cuota". Cada pago recibido es una LINEA real del pedido (fee positivo) que suma al total y aparece sola en los correos; cuando el saldo llega a 0, el total del pedido == la venta completa.
+* El boton "Abonar" crea la linea de cuota; "Marcar saldo como pagado" crea la cuota final por el saldo restante. Para corregir una cuota mal digitada se edita o elimina su linea en los articulos del pedido (ya no hay montos negativos).
+* El listado de abonos bajo el panel de pago se elimino (era una variable externa al pedido); queda una sola linea Venta / Facturado / Saldo.
+* Los espejos para YAYMail (_slo_saldo_pendiente, _slo_monto_abonado = total facturado) se refrescan en cada cuota y en cada guardado del pedido (cubre ediciones manuales de las lineas). El meta _slo_abonos queda obsoleto.
+* Guard, puerta de despacho, embudo universal y avance automatico funcionan igual, ahora sobre el saldo derivado de las cuotas (verificado con la suite completa).
 
 = 1.8.0 =
 * El despacho ya no es un rol configurable: es SIEMPRE "processing" (Merch Lista), cableado y obligatorio. Se elimino el dropdown "Despacho (opcional)" y el interruptor on/off de la puerta de despacho -- la puerta esta siempre activa (queda el filtro slo_dispatch_gate_enabled como valvula de emergencia para codigo).

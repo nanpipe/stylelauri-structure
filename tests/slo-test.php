@@ -3,9 +3,10 @@
  * Functional test for stylelauri-order-flow against the wp-demo site.
  * Run from C:\wp-demo\site:  php ..\wp-cli.phar eval-file <this file>
  *
- * v1.4.0: the plugin no longer registers its own statuses. This test
- * registers four store-side statuses (simulating the user's own status
- * plugin) and maps the plugin roles to them via options.
+ * v1.9 model: saldo derives from the ORDER itself --
+ *   saldo = abono-reserva fee (deferred) - sum of "... de cuota" fees.
+ * Statuses are store-created; roles map via options; dispatch is
+ * hardwired to 'processing' (Merch Lista).
  */
 
 error_reporting( E_ALL & ~E_DEPRECATED );
@@ -15,6 +16,10 @@ function slo_check( $name, $cond, $detail = '' ) {
 	$GLOBALS['slo_results'][] = array( 'name' => $name, 'pass' => (bool) $cond, 'detail' => $detail );
 	echo ( $cond ? 'PASS' : 'FAIL' ) . "  $name" . ( $detail ? "  [$detail]" : '' ) . "\n";
 }
+
+// wp-cli runs with no user; act as admin (id 1) so capability checks
+// (bulk action, cuotas, mark_saldo_paid) behave like the real screen.
+wp_set_current_user( 1 );
 
 // ---- Capture all outgoing mail ----
 global $slo_mail;
@@ -33,34 +38,50 @@ function slo_mail_reset() {
 	$slo_mail = array();
 }
 
-// wp-cli runs with no user; act as admin (id 1) so capability checks
-// (bulk action, mark_saldo_paid) behave like the real admin screen.
-wp_set_current_user( 1 );
+// ---- Helpers ----
+function slo_make_product( $name, $price ) {
+	$p = new WC_Product_Simple();
+	$p->set_name( $name );
+	$p->set_regular_price( $price );
+	$p->set_status( 'publish' );
+	$p->save();
+	return $p->get_id();
+}
+
+/** Simulate the checkout's Abono Reserva fee on an existing order. */
+function slo_add_abono_fee( $order, $monto ) {
+	$fee = new WC_Order_Item_Fee();
+	$fee->set_name( SLO_Checkout_Abono::fee_label() );
+	$fee->set_amount( (string) -$monto );
+	$fee->set_total( (string) -$monto );
+	$order->add_item( $fee );
+	$order->calculate_totals( false );
+	$order->update_meta_data( '_slo_abono_checkout', '1' );
+	$order->update_meta_data( SLO_Order_Balance::META_DESCUENTO, $monto );
+	SLO_Order_Balance::sync_meta_mirrors( $order );
+	$order->save();
+}
 
 // ---- 0. Store-side statuses (simulating the user's status plugin) ----
 foreach ( array(
-	'wc-st-abono'   => 'Abono pendiente',
-	'wc-st-prod'    => 'Produccion/Reserva',
-	'wc-st-prep'    => 'Preparacion',
-	'wc-st-enviado' => 'Enviado (tienda)',
+	'wc-st-abono' => 'Saldo Pendiente',
+	'wc-st-prod'  => 'Abono Produccion',
+	'wc-st-prep'  => 'Preparacion',
 ) as $key => $label ) {
 	register_post_status( $key, array( 'label' => $label, 'public' => false ) );
 }
 add_filter( 'wc_order_statuses', function ( $statuses ) {
-	$statuses['wc-st-abono']   = 'Abono pendiente';
-	$statuses['wc-st-prod']    = 'Produccion/Reserva';
-	$statuses['wc-st-prep']    = 'Preparacion';
-	$statuses['wc-st-enviado'] = 'Enviado (tienda)';
+	$statuses['wc-st-abono'] = 'Saldo Pendiente';
+	$statuses['wc-st-prod']  = 'Abono Produccion';
+	$statuses['wc-st-prep']  = 'Preparacion';
 	return $statuses;
 } );
 
-// Map plugin roles to those statuses (what the user does in Ajustes).
-// Despacho is NOT a role anymore: it is hardwired to 'processing'.
 update_option( 'slo_status_abono', 'wc-st-abono' );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
 update_option( 'slo_status_listo', 'wc-st-prep' );
 
-slo_check( 'plugin does NOT register slo-* statuses', ! isset( wc_get_order_statuses()['wc-slo-abono'] ) && ! isset( wc_get_order_statuses()['wc-slo-enviado'] ) );
+slo_check( 'plugin does NOT register slo-* statuses', ! isset( wc_get_order_statuses()['wc-slo-abono'] ) );
 slo_check( 'roles mapped to store statuses', 'st-abono' === SLO_Order_Statuses::get_status( 'abono' ) && 'st-prep' === SLO_Order_Statuses::get_status( 'listo' ) );
 
 // ---- 1. Taxonomy + lote dates ----
@@ -74,32 +95,20 @@ update_term_meta( $jk_id, 'slo_fecha_cierre', '2026-07-15' );
 update_term_meta( $jk_id, 'slo_fecha_despacho', '2026-08-10' );
 update_term_meta( $ck_id, 'slo_fecha_cierre', '2026-08-01' );
 update_term_meta( $ck_id, 'slo_fecha_despacho', '2026-09-05' );
+slo_check( 'term dates stored/read', '2026-08-10' === SLO_Taxonomy::get_term_dates( $jk_id )['despacho'] );
 
-$jk_dates = SLO_Taxonomy::get_term_dates( $jk_id );
-slo_check( 'term dates stored/read', '2026-08-10' === $jk_dates['despacho'] );
-
-// ---- 2. Products ----
-function slo_make_product( $name, $price ) {
-	$p = new WC_Product_Simple();
-	$p->set_name( $name );
-	$p->set_regular_price( $price );
-	$p->set_status( 'publish' );
-	$p->save();
-	return $p->get_id();
-}
 $p_jk    = slo_make_product( 'Jersey JK test', 100 );
 $p_ck    = slo_make_product( 'Hoodie CK test', 80 );
 $p_stock = slo_make_product( 'Ramen test', 10 );
 wp_set_object_terms( $p_jk, array( $jk_id ), 'lote_preventa' );
 wp_set_object_terms( $p_ck, array( $ck_id ), 'lote_preventa' );
-
 slo_check( 'is_preventa_product', SLO_Taxonomy::is_preventa_product( $p_jk ) && ! SLO_Taxonomy::is_preventa_product( $p_stock ) );
 
-// ---- 3. Snapshot: multi-lote + governing date ----
+// ---- 2. Snapshot: multi-lote + governing date ----
 $order = wc_create_order();
 $order->add_product( wc_get_product( $p_jk ), 1 );
 $order->add_product( wc_get_product( $p_ck ), 1 );
-$order->add_product( wc_get_product( $p_stock ), 2 );
+$order->add_product( wc_get_product( $p_stock ), 2 ); // total 200
 $order->set_billing_email( 'cliente@stylelauri.test' );
 $order->set_billing_first_name( 'Lau' );
 $order->set_status( 'pending' );
@@ -109,10 +118,8 @@ $oid = $order->get_id();
 
 SLO_Order_Snapshot::recompute_snapshot_from_order( $order );
 $order = wc_get_order( $oid );
-$lotes = SLO_Order_Snapshot::get_order_lotes( $order );
-$fecha = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
-slo_check( 'snapshot: 2 lotes captured', 2 === count( $lotes ), implode( ',', $lotes ) );
-slo_check( 'snapshot: governing date = latest (CK)', '2026-09-05' === $fecha, $fecha );
+slo_check( 'snapshot: 2 lotes captured', 2 === count( SLO_Order_Snapshot::get_order_lotes( $order ) ) );
+slo_check( 'snapshot: governing date = latest (CK)', '2026-09-05' === SLO_Order_Snapshot::get_order_fecha_despacho( $order ) );
 
 $o2 = wc_create_order();
 $o2->add_product( wc_get_product( $p_stock ), 1 );
@@ -123,130 +130,130 @@ SLO_Order_Snapshot::recompute_snapshot( $o2->get_id() );
 $o2 = wc_get_order( $o2->get_id() );
 slo_check( 'stock-only order: no lotes, no fecha', array() === SLO_Order_Snapshot::get_order_lotes( $o2 ) && '' === SLO_Order_Snapshot::get_order_fecha_despacho( $o2 ) );
 
-// ---- 4. Plugin sends NO emails of its own (YAYMail/status plugin owns mail) ----
-slo_check( 'plugin email classes NOT registered', ! isset( WC()->mailer()->get_emails()['WC_Email_SLO_Abono'] ) && ! class_exists( 'WC_Email_SLO_Enviado' ) );
+// ---- 3. Fee-based saldo model ----
+slo_add_abono_fee( $order, 150 ); // pays 50 today, defers 150
+$order = wc_get_order( $oid );
+slo_check( 'saldo model: WC total = 50 (paid today)', 50.0 === (float) $order->get_total(), (string) $order->get_total() );
+slo_check( 'saldo model: descuento = 150 (from fee)', 150.0 === SLO_Order_Balance::get_descuento( $order ) );
+slo_check( 'saldo model: saldo = 150', 150.0 === SLO_Order_Balance::get_saldo_pendiente( $order ) );
+slo_check( 'saldo model: venta real = 200', 200.0 === SLO_Order_Balance::get_total_real( $order ) );
+slo_check( 'saldo model: mirrors synced', 150.0 === (float) $order->get_meta( '_slo_saldo_pendiente' ) && 50.0 === (float) $order->get_meta( '_slo_monto_abonado' ) );
 
+// Plugin sends no mail of its own.
+slo_check( 'plugin email classes NOT registered', ! isset( WC()->mailer()->get_emails()['WC_Email_SLO_Abono'] ) );
 slo_mail_reset();
-$order->update_meta_data( '_slo_monto_abonado', 50 ); // total = 200
-$order->save();
 $order->update_status( 'st-abono' );
-slo_check( 'no plugin email on abono transition', 0 === count( slo_mail_subjects() ), implode( ' | ', slo_mail_subjects() ) );
+slo_check( 'no plugin email on abono transition', 0 === count( slo_mail_subjects() ) );
 
-$saldo = SLO_Order_Balance::get_saldo_pendiente( $order );
-slo_check( 'saldo pendiente = 150', 150.0 === $saldo, (string) $saldo );
-
-// ---- 5. Reminder HOOK on mapped listo, block on mapped enviado ----
+// ---- 4. Reminder hook + NEVER rules on main flow ----
 global $slo_reminder_fired;
 $slo_reminder_fired = 0;
 add_action( 'slo_saldo_reminder', function () {
 	$GLOBALS['slo_reminder_fired']++;
 } );
-slo_mail_reset();
 $order->update_status( 'st-prep' );
-slo_check( 'slo_saldo_reminder hook fires on mapped listo', 1 === $GLOBALS['slo_reminder_fired'], (string) $GLOBALS['slo_reminder_fired'] );
-slo_check( 'no plugin email on listo transition', 0 === count( slo_mail_subjects() ) );
+slo_check( 'slo_saldo_reminder hook fires on Preparacion with saldo', 1 === $GLOBALS['slo_reminder_fired'] );
 
-// NEVER rule: attempt to reach Merch Lista (processing) with saldo ->
-// REDIRECTED to Saldo Pendiente (mapped abono role), any origin.
-$order->update_status( 'processing' );
+$order->update_status( 'processing' ); // exit attempt with saldo
 $order = wc_get_order( $oid );
-slo_check( 'NEVER rule: listo->processing with saldo redirected to Saldo Pendiente', 'st-abono' === $order->get_status(), $order->get_status() );
+slo_check( 'NEVER rule: exit with saldo redirected to Saldo Pendiente', 'st-abono' === $order->get_status(), $order->get_status() );
 
-// ---- 6. Pay saldo -> auto-advance to processing; saldo meta persisted ----
+// ---- 5. Cuotas: partial payments as real order lines ----
+SLO_Order_Balance::add_cuota( $order, 100, 'manual' );
+$order = wc_get_order( $oid );
+slo_check( 'cuota: fee line added, total grows (150)', 150.0 === (float) $order->get_total(), (string) $order->get_total() );
+slo_check( 'cuota: saldo drops to 50', 50.0 === SLO_Order_Balance::get_saldo_pendiente( $order ) );
+slo_check( 'cuota: fee named "... de cuota"', 0 < SLO_Order_Balance::get_cuotas_total( $order ) );
+slo_check( 'cuota: mirrors follow', 50.0 === (float) $order->get_meta( '_slo_saldo_pendiente' ), (string) $order->get_meta( '_slo_saldo_pendiente' ) );
+slo_check( 'cuota: venta real stays 200', 200.0 === SLO_Order_Balance::get_total_real( $order ) );
+
+// Mark saldo as paid -> final cuota + auto-advance to Merch Lista.
 $order->update_meta_data( '_slo_guia_envio', 'GUIA-XYZ-123' );
 $order->save();
-SLO_Order_Balance::mark_saldo_paid( $oid ); // registers ledger entry, saldo 0
-$order = wc_get_order( $oid );
-slo_check( 'saldo 0 auto-advances Saldo Pendiente -> Merch Lista', 'processing' === $order->get_status(), $order->get_status() );
-slo_check( 'saldo meta persisted for YAYMail (_slo_saldo_pendiente = 0)', '0' === (string) (float) $order->get_meta( '_slo_saldo_pendiente' ), (string) $order->get_meta( '_slo_saldo_pendiente' ) );
+$order = SLO_Order_Balance::mark_saldo_paid( $oid );
+slo_check( 'mark_saldo_paid: final cuota, saldo 0', 0.0 === SLO_Order_Balance::get_saldo_pendiente( $order ) );
+slo_check( 'mark_saldo_paid: total = venta completa (200)', 200.0 === (float) $order->get_total(), (string) $order->get_total() );
+slo_check( 'mark_saldo_paid: auto-advance to Merch Lista', 'processing' === $order->get_status(), $order->get_status() );
 slo_check( 'guia meta available for templates', 'GUIA-XYZ-123' === $order->get_meta( '_slo_guia_envio' ) );
 
-// ---- 7. Snapshot locked only on terminal statuses ----
-slo_check( 'locked list = terminal only (processing NOT locked)', array( 'completed', 'cancelled', 'refunded' ) === array_values( SLO_Order_Statuses::locked_snapshot_statuses() ) );
+// ---- 6. Snapshot locked only on terminal statuses ----
+slo_check( 'locked list = terminal only', array( 'completed', 'cancelled', 'refunded' ) === array_values( SLO_Order_Statuses::locked_snapshot_statuses() ) );
 $order->update_status( 'completed' );
-$order = wc_get_order( $oid );
+$order  = wc_get_order( $oid );
 $before = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
 update_term_meta( $ck_id, 'slo_fecha_despacho', '2026-12-31' );
 SLO_Order_Snapshot::recompute_snapshot( $oid );
-$after = SLO_Order_Snapshot::get_order_fecha_despacho( wc_get_order( $oid ) );
-slo_check( 'snapshot locked once completed', $before === $after, "$before vs $after" );
+slo_check( 'snapshot locked once completed', $before === SLO_Order_Snapshot::get_order_fecha_despacho( wc_get_order( $oid ) ) );
 
-// ---- 8. Settings / abono checkout model ----
+// ---- 7. Settings ----
 slo_check( 'settings: default percent 50', 50.0 === SLO_Settings::get_percent() );
-slo_check( 'settings: titulo interpolates percent', false !== strpos( SLO_Settings::get_titulo(), '50%' ), SLO_Settings::get_titulo() );
+slo_check( 'settings: titulo interpolates percent', false !== strpos( SLO_Settings::get_titulo(), '50%' ) );
+update_option( 'slo_status_abono', 'wc-processing' ); // audit: reserved
+slo_check( 'audit: role mapped to processing treated as unmapped', ! SLO_Order_Statuses::is_mapped( 'abono' ) );
+update_option( 'slo_status_abono', 'wc-st-abono' );
 
-$o4 = wc_create_order();
-$o4->add_product( wc_get_product( $p_jk ), 1 ); // 100
-$o4->set_billing_email( 'abono@stylelauri.test' );
-$o4->set_billing_first_name( 'Abo' );
-$fee = new WC_Order_Item_Fee();
-$fee->set_name( 'Abono Reserva (pagas 50% hoy)' );
-$fee->set_amount( -50 );
-$fee->set_total( -50 );
-$o4->add_item( $fee );
-$o4->calculate_totals();
-$o4->save();
-SLO_Order_Snapshot::recompute_snapshot( $o4->get_id() );
-$o4->update_meta_data( '_slo_abono_checkout', '1' );
-$o4->update_meta_data( SLO_Order_Balance::META_DESCUENTO, 50 );
-$o4->save();
-SLO_Order_Balance::add_abono( $o4, (float) $o4->get_total(), 'checkout' );
-$o4 = wc_get_order( $o4->get_id() );
+// ---- 8. Fee extraction: exact label only (audit) ----
+$a1 = wc_create_order();
+$a1->add_product( wc_get_product( $p_jk ), 1 );
+$fee_ok = new WC_Order_Item_Fee();
+$fee_ok->set_name( SLO_Checkout_Abono::fee_label() );
+$fee_ok->set_total( -50 );
+$a1->add_item( $fee_ok );
+$fee_evil = new WC_Order_Item_Fee();
+$fee_evil->set_name( 'Regalo Abono Reserva especial' );
+$fee_evil->set_total( -30 );
+$a1->add_item( $fee_evil );
+$a1->save();
+slo_check( 'audit: fee extraction ignores substring-named fees', 50.0 === SLO_Checkout_Abono::extract_descuento( $a1 ) );
 
-slo_check( 'abono model: total real = 100', 100.0 === SLO_Order_Balance::get_total_real( $o4 ), (string) SLO_Order_Balance::get_total_real( $o4 ) );
-slo_check( 'abono model: saldo = 50 (deferred)', 50.0 === SLO_Order_Balance::get_saldo_pendiente( $o4 ), (string) SLO_Order_Balance::get_saldo_pendiente( $o4 ) );
+// ---- 9. Manual cuota input: strict format + bounds (audit) ----
+$a2 = wc_create_order();
+$a2->add_product( wc_get_product( $p_jk ), 1 ); // 100
+$a2->set_billing_email( 'audit@stylelauri.test' );
+$a2->calculate_totals();
+$a2->save();
+slo_add_abono_fee( $a2, 50 ); // saldo 50
+$a2 = wc_get_order( $a2->get_id() );
 
-// Router: paid preventa with saldo -> FUNNEL FIRST (Abono Produccion),
-// not Saldo Pendiente -- saldo is collected after Preparacion.
-slo_mail_reset();
-$o4->update_status( 'processing' );
-$o4 = wc_get_order( $o4->get_id() );
-slo_check( 'gate: preventa with saldo enters funnel first (produccion)', 'st-prod' === $o4->get_status(), $o4->get_status() );
-$has_processing_mail = false;
-foreach ( slo_mail_subjects() as $s ) {
-	if ( false !== stripos( $s, 'procesando' ) || false !== stripos( $s, 'processing' ) ) { $has_processing_mail = true; }
+$_POST['slo_nuevo_abono'] = '1.234,56'; // invalid format
+SLO_Order_Balance::save_balance_field( $a2->get_id() );
+slo_check( 'audit: malformed amount rejected', 50.0 === SLO_Order_Balance::get_saldo_pendiente( wc_get_order( $a2->get_id() ) ) );
+
+$_POST['slo_nuevo_abono'] = '-20'; // negatives not allowed (edit the line instead)
+SLO_Order_Balance::save_balance_field( $a2->get_id() );
+slo_check( 'audit: negative amount rejected', 50.0 === SLO_Order_Balance::get_saldo_pendiente( wc_get_order( $a2->get_id() ) ) );
+
+$_POST['slo_nuevo_abono'] = '999999'; // exceeds saldo
+SLO_Order_Balance::save_balance_field( $a2->get_id() );
+slo_check( 'audit: overpay beyond saldo rejected', 50.0 === SLO_Order_Balance::get_saldo_pendiente( wc_get_order( $a2->get_id() ) ) );
+
+$_POST['slo_nuevo_abono'] = '40'; // valid cuota
+SLO_Order_Balance::save_balance_field( $a2->get_id() );
+$a2 = wc_get_order( $a2->get_id() );
+slo_check( 'audit: valid cuota accepted (saldo 10)', 10.0 === SLO_Order_Balance::get_saldo_pendiente( $a2 ), (string) SLO_Order_Balance::get_saldo_pendiente( $a2 ) );
+unset( $_POST['slo_nuevo_abono'] );
+
+// Manual correction path: deleting the cuota line restores the saldo.
+foreach ( $a2->get_fees() as $item_id => $fee ) {
+	if ( ' de cuota' === substr( $fee->get_name(), -9 ) ) {
+		$a2->remove_item( $item_id );
+	}
 }
-slo_check( 'gate: native processing email suppressed when routed', ! $has_processing_mail, implode( ' | ', slo_mail_subjects() ) );
+$a2->calculate_totals( false );
+$a2->save();
+$a2 = wc_get_order( $a2->get_id() );
+slo_check( 'cuota line deletion restores saldo (50)', 50.0 === SLO_Order_Balance::get_saldo_pendiente( $a2 ), (string) SLO_Order_Balance::get_saldo_pendiente( $a2 ) );
 
-// ---- 9. Abono totals rows (emails / customer-facing tables) ----
-$rows = SLO_Order_Balance::add_abono_total_rows( array( 'order_total' => array( 'label' => 'Total:', 'value' => '50' ) ), $o4 );
-$row_keys = array_keys( $rows );
-slo_check( 'totals rows: abono row added', in_array( 'slo_abono_0', $row_keys, true ), wp_json_encode( $row_keys ) );
-slo_check( 'totals rows: saldo row added', isset( $rows['slo_saldo'] ) && false !== strpos( wp_strip_all_tags( $rows['slo_saldo']['value'] ), '50' ), isset( $rows['slo_saldo'] ) ? wp_strip_all_tags( $rows['slo_saldo']['value'] ) : '' );
-$rows_plain = SLO_Order_Balance::add_abono_total_rows( array(), $o2 ); // order without abono data
-slo_check( 'totals rows: untouched for normal orders', array() === $rows_plain );
+// ---- 10. Saldo total row (emails) ----
+$rows = SLO_Order_Balance::add_saldo_total_row( array( 'order_total' => array( 'label' => 'Total:', 'value' => 'x' ) ), $a2 );
+slo_check( 'totals: saldo row added for abono order', isset( $rows['slo_saldo'] ) );
+$rows_plain = SLO_Order_Balance::add_saldo_total_row( array(), $o2 );
+slo_check( 'totals: untouched for normal orders', array() === $rows_plain );
 
-// ---- 10. Ledger behavior ----
-$o6 = wc_create_order();
-$o6->add_product( wc_get_product( $p_jk ), 2 ); // 200
-$o6->set_billing_email( 'ledger@stylelauri.test' );
-$o6->calculate_totals();
-$o6->save();
-SLO_Order_Balance::add_abono( $o6, 60, 'manual' );
-SLO_Order_Balance::add_abono( $o6, 40, 'manual' );
-$o6 = wc_get_order( $o6->get_id() );
-$ledger6 = SLO_Order_Balance::get_abonos( $o6 );
-slo_check( 'ledger: 2 manual abonos, sum 100', 2 === count( $ledger6 ) && 100.0 === (float) $o6->get_meta( '_slo_monto_abonado' ) );
-slo_check( 'ledger: entries carry dates', ! empty( $ledger6[0]['fecha'] ) && ! empty( $ledger6[1]['fecha'] ) );
-SLO_Order_Balance::add_abono( $o6, -10, 'manual' );
-$o6 = wc_get_order( $o6->get_id() );
-slo_check( 'ledger: negative correction (total 90)', 90.0 === (float) $o6->get_meta( '_slo_monto_abonado' ), (string) $o6->get_meta( '_slo_monto_abonado' ) );
+// ---- 11. Dispatch gate: universal funnel ----
+slo_check( 'gate: always enabled (mandatory)', SLO_Dispatch_Gate::is_enabled() );
 
-// Legacy seed: old order with abonado meta but no ledger.
-$o8 = wc_create_order();
-$o8->add_product( wc_get_product( $p_jk ), 1 );
-$o8->save();
-$o8->update_meta_data( '_slo_monto_abonado', 30 );
-$o8->save();
-SLO_Order_Balance::add_abono( $o8, 20, 'manual' );
-$o8 = wc_get_order( $o8->get_id() );
-$ledger8 = SLO_Order_Balance::get_abonos( $o8 );
-slo_check( 'ledger: legacy abonado seeded as previo', 2 === count( $ledger8 ) && 'previo' === $ledger8[0]['origen'] && 50.0 === (float) $o8->get_meta( '_slo_monto_abonado' ), wp_json_encode( wp_list_pluck( $ledger8, 'origen' ) ) );
-
-// ---- 11. Dispatch gate core paths ----
-slo_check( 'gate: enabled by default', SLO_Dispatch_Gate::is_enabled() );
-
-// UNIVERSAL funnel: even fully-paid STOCK must pass through Preparacion.
+// Fully-paid STOCK order also enters the funnel.
 $g1 = wc_create_order();
 $g1->add_product( wc_get_product( $p_stock ), 1 );
 $g1->set_billing_email( 'gate1@stylelauri.test' );
@@ -256,140 +263,72 @@ SLO_Order_Snapshot::recompute_snapshot( $g1->get_id() );
 $g1->update_status( 'processing' ); // what Wompi does
 $g1 = wc_get_order( $g1->get_id() );
 slo_check( 'gate: stock paid enters funnel (Abono Produccion)', 'st-prod' === $g1->get_status(), $g1->get_status() );
-slo_check( 'gate: no-abono order saldo 0', 0.0 === SLO_Order_Balance::get_saldo_pendiente( $g1 ) );
 
-// Manual bypass without Preparacion -> reverted.
-$g1->update_status( 'processing' );
+$g1->update_status( 'processing' ); // manual bypass, no Preparacion
 $g1 = wc_get_order( $g1->get_id() );
 slo_check( 'gate: manual bypass without Preparacion reverted', 'st-prod' === $g1->get_status(), $g1->get_status() );
 
-// After Preparacion -> Merch Lista reachable.
 $g1->update_status( 'st-prep' );
 $g1->update_status( 'processing' );
 $g1 = wc_get_order( $g1->get_id() );
-slo_check( 'gate: stock after Preparacion reaches Merch Lista', 'processing' === $g1->get_status(), $g1->get_status() );
+slo_check( 'gate: after Preparacion reaches Merch Lista', 'processing' === $g1->get_status(), $g1->get_status() );
 
-// Paid preventa -> routed to mapped produccion.
+// Paid preventa (with saldo) -> funnel first.
 $g2 = wc_create_order();
 $g2->add_product( wc_get_product( $p_jk ), 1 );
 $g2->set_billing_email( 'gate2@stylelauri.test' );
 $g2->calculate_totals();
 $g2->save();
 SLO_Order_Snapshot::recompute_snapshot( $g2->get_id() );
+slo_add_abono_fee( $g2, 50 );
+$g2 = wc_get_order( $g2->get_id() );
 $g2->update_status( 'processing' );
 $g2 = wc_get_order( $g2->get_id() );
-slo_check( 'gate: paid preventa routed to mapped produccion', 'st-prod' === $g2->get_status(), $g2->get_status() );
+slo_check( 'gate: preventa with saldo enters funnel first', 'st-prod' === $g2->get_status(), $g2->get_status() );
 
-// After passing listo, a payment-flow re-entry sticks.
+// After Preparacion, exit with saldo -> Saldo Pendiente; pay -> Merch Lista.
 $g2->update_status( 'st-prep' );
-$g2->update_status( 'pending' );
-$g2 = wc_get_order( $g2->get_id() );
 $g2->update_status( 'processing' );
 $g2 = wc_get_order( $g2->get_id() );
-slo_check( 'gate: preventa after listo stays processing', 'processing' === $g2->get_status(), $g2->get_status() );
+slo_check( 'gate: post-prep exit with saldo -> Saldo Pendiente', 'st-abono' === $g2->get_status(), $g2->get_status() );
+SLO_Order_Balance::mark_saldo_paid( $g2->get_id() );
+$g2 = wc_get_order( $g2->get_id() );
+slo_check( 'gate: saldo 0 releases to Merch Lista', 'processing' === $g2->get_status(), $g2->get_status() );
 
-// Unmapped produccion role: guard's Preparacion rule still keeps the
-// order out of Merch Lista (reverted to origin).
-delete_option( 'slo_status_produccion' );
+// From arbitrary manual origin (on-hold) with saldo, paso set.
 $g3 = wc_create_order();
-$g3->add_product( wc_get_product( $p_jk ), 1 );
+$g3->add_product( wc_get_product( $p_stock ), 2 );
 $g3->set_billing_email( 'gate3@stylelauri.test' );
 $g3->calculate_totals();
 $g3->save();
 SLO_Order_Snapshot::recompute_snapshot( $g3->get_id() );
+slo_add_abono_fee( $g3, 10 );
+$g3 = wc_get_order( $g3->get_id() );
+$g3->update_status( 'st-prep' );
+$g3->update_status( 'on-hold' );
 $g3->update_status( 'processing' );
 $g3 = wc_get_order( $g3->get_id() );
-slo_check( 'gate: unmapped produccion -> still kept out of Merch Lista (reverted)', 'processing' !== $g3->get_status(), $g3->get_status() );
-update_option( 'slo_status_produccion', 'wc-st-prod' );
+slo_check( 'NEVER rule: from on-hold with saldo redirected', 'st-abono' === $g3->get_status(), $g3->get_status() );
 
-// ---- 11b. NEVER rule: saldo can't reach Merch Lista from ANY origin ----
-// Stock order with partial abono: funnel first, then Saldo Pendiente
-// blocks the exit of Preparacion, then saldo 0 releases.
-$n1 = wc_create_order();
-$n1->add_product( wc_get_product( $p_stock ), 2 ); // 20
-$n1->set_billing_email( 'never1@stylelauri.test' );
-$n1->calculate_totals();
-$n1->save();
-SLO_Order_Snapshot::recompute_snapshot( $n1->get_id() );
-SLO_Order_Balance::add_abono( $n1, 5, 'manual' ); // saldo 15
-$n1->update_status( 'processing' ); // from pending: funnel first
-$n1 = wc_get_order( $n1->get_id() );
-slo_check( 'NEVER rule: paid-with-saldo enters funnel first', 'st-prod' === $n1->get_status(), $n1->get_status() );
-
-$n1->update_status( 'st-prep' ); // packed (paso set)
-$n1->update_status( 'processing' ); // exit attempt with saldo
-$n1 = wc_get_order( $n1->get_id() );
-slo_check( 'NEVER rule: after Preparacion, saldo redirects to Saldo Pendiente', 'st-abono' === $n1->get_status(), $n1->get_status() );
-
-// From an arbitrary manual origin (on-hold), paso set, saldo pending.
-$n1->update_status( 'on-hold' );
-$n1->update_status( 'processing' );
-$n1 = wc_get_order( $n1->get_id() );
-slo_check( 'NEVER rule: from on-hold also redirected', 'st-abono' === $n1->get_status(), $n1->get_status() );
-
-// Saldo paid in Saldo Pendiente -> auto-advances to Merch Lista.
-SLO_Order_Balance::mark_saldo_paid( $n1->get_id() );
-$n1 = wc_get_order( $n1->get_id() );
-slo_check( 'NEVER rule: saldo 0 releases to Merch Lista', 'processing' === $n1->get_status(), $n1->get_status() );
-
-// Abono role UNMAPPED -> reverts instead of redirecting (still never lands).
+// Abono role unmapped -> reverts (still never lands in Merch Lista).
 delete_option( 'slo_status_abono' );
-$n2 = wc_create_order();
-$n2->add_product( wc_get_product( $p_stock ), 2 );
-$n2->set_billing_email( 'never2@stylelauri.test' );
-$n2->calculate_totals();
-$n2->save();
-SLO_Order_Snapshot::recompute_snapshot( $n2->get_id() );
-SLO_Order_Balance::add_abono( $n2, 5, 'manual' );
-$n2->update_status( 'st-prep' ); // packed, saldo pending
-$n2->update_status( 'processing' );
-$n2 = wc_get_order( $n2->get_id() );
-slo_check( 'NEVER rule: unmapped abono role -> reverted, not processing', 'processing' !== $n2->get_status(), $n2->get_status() );
+$g3->update_status( 'processing' );
+$g3 = wc_get_order( $g3->get_id() );
+slo_check( 'NEVER rule: unmapped abono role -> reverted', 'processing' !== $g3->get_status(), $g3->get_status() );
 update_option( 'slo_status_abono', 'wc-st-abono' );
 
-// ---- 11c. Audit fixes ----
-// HIGH: mapping a role to wc-processing is treated as unmapped.
-update_option( 'slo_status_abono', 'wc-processing' );
-slo_check( 'audit: role mapped to processing treated as unmapped', '' === SLO_Order_Statuses::get_status( 'abono' ) && ! SLO_Order_Statuses::is_mapped( 'abono' ) );
-update_option( 'slo_status_abono', 'wc-st-abono' );
-
-// MEDIUM: descuento extraction matches EXACT fee label only.
-$a1 = wc_create_order();
-$a1->add_product( wc_get_product( $p_jk ), 1 );
-$fee_ok = new WC_Order_Item_Fee();
-$fee_ok->set_name( SLO_Checkout_Abono::fee_label() );
-$fee_ok->set_total( -50 );
-$a1->add_item( $fee_ok );
-$fee_evil = new WC_Order_Item_Fee();
-$fee_evil->set_name( 'Regalo Abono Reserva especial' ); // substring attack
-$fee_evil->set_total( -30 );
-$a1->add_item( $fee_evil );
-$a1->save();
-slo_check( 'audit: fee extraction ignores substring-named fees', 50.0 === SLO_Checkout_Abono::extract_descuento( $a1 ), (string) SLO_Checkout_Abono::extract_descuento( $a1 ) );
-
-// LOW: strict format + sanity bounds on manual abono (save path).
-$a2 = wc_create_order();
-$a2->add_product( wc_get_product( $p_jk ), 1 ); // 100
-$a2->set_billing_email( 'audit@stylelauri.test' );
-$a2->calculate_totals();
-$a2->save();
-$_POST['slo_nuevo_abono'] = '1.234,56'; // invalid format -> rejected
-SLO_Order_Balance::save_balance_field( $a2->get_id() );
-$a2 = wc_get_order( $a2->get_id() );
-slo_check( 'audit: malformed amount rejected', ! $a2->meta_exists( '_slo_monto_abonado' ) );
-$_POST['slo_nuevo_abono'] = '999999'; // exceeds total real -> rejected
-SLO_Order_Balance::save_balance_field( $a2->get_id() );
-$a2 = wc_get_order( $a2->get_id() );
-slo_check( 'audit: overpay beyond venta rejected', ! $a2->meta_exists( '_slo_monto_abonado' ) );
-$_POST['slo_nuevo_abono'] = '40'; // valid first abono
-SLO_Order_Balance::save_balance_field( $a2->get_id() );
-$a2 = wc_get_order( $a2->get_id() );
-slo_check( 'audit: valid first abono accepted', 40.0 === (float) $a2->get_meta( '_slo_monto_abonado' ), (string) $a2->get_meta( '_slo_monto_abonado' ) );
-$_POST['slo_nuevo_abono'] = '-100'; // correction beyond abonado -> rejected
-SLO_Order_Balance::save_balance_field( $a2->get_id() );
-$a2 = wc_get_order( $a2->get_id() );
-slo_check( 'audit: negative correction beyond abonado rejected', 40.0 === (float) $a2->get_meta( '_slo_monto_abonado' ), (string) $a2->get_meta( '_slo_monto_abonado' ) );
-unset( $_POST['slo_nuevo_abono'] );
+// Unmapped produccion: guard still keeps unprepped orders out.
+delete_option( 'slo_status_produccion' );
+$g4 = wc_create_order();
+$g4->add_product( wc_get_product( $p_jk ), 1 );
+$g4->set_billing_email( 'gate4@stylelauri.test' );
+$g4->calculate_totals();
+$g4->save();
+SLO_Order_Snapshot::recompute_snapshot( $g4->get_id() );
+$g4->update_status( 'processing' );
+$g4 = wc_get_order( $g4->get_id() );
+slo_check( 'gate: unmapped produccion still kept out of Merch Lista', 'processing' !== $g4->get_status(), $g4->get_status() );
+update_option( 'slo_status_produccion', 'wc-st-prod' );
 
 // ---- 12. Bulk recompute backfill ----
 $o5 = wc_create_order();
@@ -401,14 +340,10 @@ $redirect = SLO_Order_Admin_Columns::handle_bulk_action( 'http://x/wp-admin/admi
 $o5 = wc_get_order( $o5->get_id() );
 slo_check( 'bulk recompute: snapshot backfilled', $o5->meta_exists( SLO_Order_Snapshot::META_LOTES ) && 1 === count( SLO_Order_Snapshot::get_order_lotes( $o5 ) ) );
 
-// ---- 13. Saldo meta stays in sync through ledger changes ----
-slo_check( 'saldo meta synced after abonos (o6: 200-90=110)', 110.0 === (float) $o6->get_meta( '_slo_saldo_pendiente' ), (string) $o6->get_meta( '_slo_saldo_pendiente' ) );
-
-// ---- Cleanup mapping options (leave demo site as-was) ----
+// ---- Cleanup mapping options ----
 delete_option( 'slo_status_abono' );
 delete_option( 'slo_status_produccion' );
 delete_option( 'slo_status_listo' );
-delete_option( 'slo_status_enviado' );
 
 // ---- Summary ----
 $all  = $GLOBALS['slo_results'];

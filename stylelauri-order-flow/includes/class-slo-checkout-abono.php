@@ -299,12 +299,13 @@ class SLO_Checkout_Abono {
 		}
 
 		$order->update_meta_data( self::META_FLAG, '1' );
+		// Respaldo del descuento en meta (el calculo en vivo lee el fee;
+		// esto cubre el caso de que alguien borre la linea despues).
 		$order->update_meta_data( SLO_Order_Balance::META_DESCUENTO, wc_format_decimal( $descuento ) );
 
-		// Lo pagado hoy entra al historial de abonos como primera entrada.
-		// Sin save (WooCommerce guarda despues de este hook) y sin nota
-		// (el pedido aun no tiene ID para colgar la nota).
-		SLO_Order_Balance::add_abono( $order, (float) $order->get_total(), 'checkout', false, false );
+		// Espejos para YAYMail (saldo/abonado). Sin save: WooCommerce
+		// guarda el pedido justo despues de este hook.
+		SLO_Order_Balance::sync_meta_mirrors( $order );
 	}
 
 	/**
