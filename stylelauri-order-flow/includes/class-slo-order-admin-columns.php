@@ -74,6 +74,14 @@ class SLO_Order_Admin_Columns {
 			return $redirect_url;
 		}
 
+		// Defensa en profundidad: el dispatch de bulk actions de WP ya
+		// valida nonce y capacidad de la pantalla, pero este metodo es
+		// publico -- verificar capacidad por si se invoca desde otro
+		// contexto en el futuro.
+		if ( ! current_user_can( 'edit_shop_orders' ) ) {
+			return $redirect_url;
+		}
+
 		foreach ( $ids as $order_id ) {
 			SLO_Order_Snapshot::recompute_snapshot( (int) $order_id );
 		}

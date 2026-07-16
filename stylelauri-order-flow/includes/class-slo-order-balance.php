@@ -385,10 +385,55 @@ class SLO_Order_Balance {
 		// no se edita el total a mano. Funciona tanto con el boton
 		// "Abonar" como con el "Actualizar" general del pedido.
 		if ( isset( $_POST['slo_nuevo_abono'] ) && '' !== trim( wp_unslash( $_POST['slo_nuevo_abono'] ) ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
-			$monto = (float) wc_format_decimal( sanitize_text_field( wp_unslash( $_POST['slo_nuevo_abono'] ) ) );
+			$raw = sanitize_text_field( wp_unslash( $_POST['slo_nuevo_abono'] ) );
 
-			if ( 0.0 !== $monto ) {
-				self::add_abono( $order, $monto, 'manual', false );
+			// Formato estricto (punto decimal, max 2 decimales): el input
+			// del navegador siempre manda esto; cualquier otra cosa (comas
+			// de miles, locales raros) se rechaza en vez de adivinarse,
+			// para no registrar un monto distinto al digitado. [Auditoria]
+			if ( ! preg_match( '/^-?\d+(\.\d{1,2})?$/', $raw ) ) {
+				$order->add_order_note(
+					sprintf(
+						/* translators: %s: raw rejected input */
+						__( 'Abono NO registrado: monto "%s" con formato invalido. Usa numeros con punto decimal (ej. 25000 o 25000.50).', 'stylelauri-order-flow' ),
+						$raw
+					)
+				);
+			} else {
+				$monto   = (float) $raw;
+				$abonado = (float) $order->get_meta( self::META_ABONADO );
+
+				// Tope positivo: el saldo pendiente si el pedido ya tiene
+				// abonos; el valor real de la venta si este es el primero
+				// (un pedido sin datos de abono reporta saldo 0).
+				$saldo = self::has_abono_data( $order )
+					? self::get_saldo_pendiente( $order )
+					: self::get_total_real( $order );
+
+				// Limites de cordura: una correccion negativa no puede
+				// exceder lo ya abonado, y un abono positivo no puede
+				// exceder el saldo pendiente. [Auditoria]
+				if ( $monto < 0 && -$monto > $abonado ) {
+					$order->add_order_note(
+						sprintf(
+							/* translators: 1: rejected amount, 2: total paid so far */
+							__( 'Abono NO registrado: la correccion de %1$s excede el total abonado (%2$s).', 'stylelauri-order-flow' ),
+							wp_strip_all_tags( wc_price( $monto ) ),
+							wp_strip_all_tags( wc_price( $abonado ) )
+						)
+					);
+				} elseif ( $monto > 0 && $monto > $saldo + 0.01 ) {
+					$order->add_order_note(
+						sprintf(
+							/* translators: 1: rejected amount, 2: pending balance */
+							__( 'Abono NO registrado: %1$s excede el saldo pendiente (%2$s). Registra maximo el saldo.', 'stylelauri-order-flow' ),
+							wp_strip_all_tags( wc_price( $monto ) ),
+							wp_strip_all_tags( wc_price( $saldo ) )
+						)
+					);
+				} elseif ( 0.0 !== $monto ) {
+					self::add_abono( $order, $monto, 'manual', false );
+				}
 			}
 		}
 
@@ -509,45 +554,59 @@ class SLO_Order_Balance {
 			return;
 		}
 
-		// REGLA ABSOLUTA con la puerta de despacho activa: un pedido con
-		// saldo sin pagar NUNCA queda en Procesando (Merch Lista), venga
-		// de donde venga -- pasarela, movimiento manual, lo que sea.
-		// Si el rol "abono" (Saldo Pendiente) esta mapeado, se REDIRIGE
-		// alli (y el correo de ese estado le cobra al cliente); si no,
-		// se revierte al estado anterior.
+		// REGLAS ABSOLUTAS de Merch Lista (Procesando) con la puerta de
+		// despacho activa, en orden:
+		//
+		//  1. Solo se llega habiendo pasado por Preparacion (el pedido
+		//     empacado). Un salto manual sin pasar por ahi se revierte.
+		//     (Las entradas desde pagos las reubica el router de
+		//     SLO_Dispatch_Gate al embudo, prioridad 5 en este hook.)
+		//  2. Con saldo sin pagar NUNCA se queda: se redirige a Saldo
+		//     Pendiente (rol abono) o, sin mapear, se revierte.
 		if ( 'processing' === $new_status
-			&& $saldo > 0
 			&& class_exists( 'SLO_Dispatch_Gate' )
 			&& SLO_Dispatch_Gate::is_enabled() ) {
 
-			// El router de SLO_Dispatch_Gate (prioridad 5 en este mismo
-			// hook) pudo haberlo reubicado ya (ej. al embudo de
-			// produccion): si el estado real ya no es processing, listo.
+			// El router pudo haberlo reubicado ya (embudo de produccion):
+			// si el estado real ya no es processing, no hay nada que hacer.
 			if ( 'processing' !== $order->get_status() ) {
 				return;
 			}
 
-			$abono_status = SLO_Order_Statuses::get_status( 'abono' );
-
-			if ( '' !== $abono_status ) {
-				$order->update_status(
-					$abono_status,
-					sprintf(
-						/* translators: %s: formatted balance amount */
-						__( 'No puede quedar en Merch Lista: saldo pendiente de %s. Pasa a Saldo Pendiente hasta completar el pago.', 'stylelauri-order-flow' ),
-						wp_strip_all_tags( wc_price( $saldo ) )
-					)
-				);
-			} else {
+			// Regla 1: sin paso por Preparacion no hay Merch Lista.
+			if ( '1' !== $order->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) ) {
 				$order->set_status( $old_status );
 				$order->add_order_note(
-					sprintf(
-						/* translators: %s: formatted balance amount */
-						__( 'Bloqueado el paso a Procesando (Merch Lista): queda un saldo pendiente de %s y el rol "Saldo Pendiente" no esta mapeado.', 'stylelauri-order-flow' ),
-						wp_strip_all_tags( wc_price( $saldo ) )
-					)
+					__( 'Bloqueado el paso a Merch Lista: el pedido no ha pasado por Preparacion (empaque). Muevelo por el embudo: Abono Produccion → (Preventa) → Preparacion.', 'stylelauri-order-flow' )
 				);
 				$order->save();
+				return;
+			}
+
+			// Regla 2: sin saldo en 0 no hay Merch Lista.
+			if ( $saldo > 0 ) {
+				$abono_status = SLO_Order_Statuses::get_status( 'abono' );
+
+				if ( '' !== $abono_status ) {
+					$order->update_status(
+						$abono_status,
+						sprintf(
+							/* translators: %s: formatted balance amount */
+							__( 'No puede quedar en Merch Lista: saldo pendiente de %s. Pasa a Saldo Pendiente hasta completar el pago.', 'stylelauri-order-flow' ),
+							wp_strip_all_tags( wc_price( $saldo ) )
+						)
+					);
+				} else {
+					$order->set_status( $old_status );
+					$order->add_order_note(
+						sprintf(
+							/* translators: %s: formatted balance amount */
+							__( 'Bloqueado el paso a Merch Lista: queda un saldo pendiente de %s y el rol "Saldo Pendiente" no esta mapeado.', 'stylelauri-order-flow' ),
+							wp_strip_all_tags( wc_price( $saldo ) )
+						)
+					);
+					$order->save();
+				}
 			}
 		}
 	}

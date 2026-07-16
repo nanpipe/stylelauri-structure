@@ -68,7 +68,17 @@ class SLO_Order_Statuses {
 			return '';
 		}
 
-		return str_replace( 'wc-', '', $stored );
+		$status = str_replace( 'wc-', '', $stored );
+
+		// "Procesando" es la SALIDA de la puerta de despacho (Merch Lista,
+		// lo que Skydrops ve): mapearle un rol anularia el guard en
+		// silencio (update_status hacia el mismo estado es un no-op en
+		// WooCommerce). Se trata como no mapeado. [Hallazgo de auditoria]
+		if ( 'processing' === $status ) {
+			return '';
+		}
+
+		return $status;
 	}
 
 	/**

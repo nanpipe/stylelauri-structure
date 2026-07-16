@@ -227,6 +227,13 @@ class SLO_Settings {
 					'default'           => '',
 					'sanitize_callback' => function ( $value ) {
 						$value = sanitize_text_field( (string) $value );
+
+						// "Procesando" esta reservado: es la salida de la
+						// puerta de despacho, no puede ser un rol.
+						if ( 'wc-processing' === $value ) {
+							return '';
+						}
+
 						return 0 === strpos( $value, 'wc-' ) ? $value : '';
 					},
 				)
@@ -241,7 +248,13 @@ class SLO_Settings {
 	 * @return array<string,string> key wc-... => label.
 	 */
 	private static function status_choices() {
-		return wc_get_order_statuses();
+		$choices = wc_get_order_statuses();
+
+		// "Procesando" (Merch Lista) es la salida de la puerta de
+		// despacho: no se ofrece como rol. [Hallazgo de auditoria]
+		unset( $choices['wc-processing'] );
+
+		return $choices;
 	}
 
 	public static function render_settings_page() {

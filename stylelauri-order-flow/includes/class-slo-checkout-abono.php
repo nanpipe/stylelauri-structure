@@ -42,7 +42,6 @@ class SLO_Checkout_Abono {
 
 	const SESSION_KEY = 'slo_abono_reserva';
 	const META_FLAG   = '_slo_abono_checkout';
-	const FEE_NAME    = 'Abono Reserva';
 
 	public static function init() {
 		// Checkbox en el checkout, antes de los metodos de pago.
@@ -193,15 +192,43 @@ class SLO_Checkout_Abono {
 		$percent   = SLO_Settings::get_percent();
 		$descuento = $subtotal_preventa * ( 1 - $percent / 100 );
 
-		$cart->add_fee(
-			sprintf(
-				/* translators: %s: percent paid today */
-				__( 'Abono Reserva (pagas %s%% hoy)', 'stylelauri-order-flow' ),
-				SLO_Settings::format_percent()
-			),
-			-$descuento,
-			false
+		$cart->add_fee( self::fee_label(), -$descuento, false );
+	}
+
+	/**
+	 * Etiqueta EXACTA del fee del abono. Centralizada para que
+	 * extract_descuento() haga match exacto contra ella -- un match por
+	 * substring permitiria que otro fee (de otro plugin, con texto
+	 * controlable) contaminara el descuento registrado. [Auditoria]
+	 *
+	 * @return string
+	 */
+	public static function fee_label() {
+		return sprintf(
+			/* translators: %s: percent paid today */
+			__( 'Abono Reserva (pagas %s%% hoy)', 'stylelauri-order-flow' ),
+			SLO_Settings::format_percent()
 		);
+	}
+
+	/**
+	 * Descuento del abono leido de los fees del pedido, solo del fee con
+	 * la etiqueta exacta del plugin.
+	 *
+	 * @param WC_Order $order Pedido.
+	 * @return float Monto diferido (positivo), 0 si no hay fee de abono.
+	 */
+	public static function extract_descuento( $order ) {
+		$expected  = self::fee_label();
+		$descuento = 0.0;
+
+		foreach ( $order->get_fees() as $fee ) {
+			if ( $fee->get_name() === $expected ) {
+				$descuento += -(float) $fee->get_total();
+			}
+		}
+
+		return $descuento;
 	}
 
 	/**
@@ -267,13 +294,8 @@ class SLO_Checkout_Abono {
 
 		// Leer el descuento del fee real del pedido (no recalcular): asi el
 		// numero guardado coincide al centavo con lo que vio el cliente.
-		$descuento = 0.0;
-
-		foreach ( $order->get_fees() as $fee ) {
-			if ( false !== strpos( $fee->get_name(), self::FEE_NAME ) ) {
-				$descuento += -(float) $fee->get_total();
-			}
-		}
+		// Match EXACTO de etiqueta -- ver extract_descuento().
+		$descuento = self::extract_descuento( $order );
 
 		if ( $descuento <= 0 ) {
 			return;

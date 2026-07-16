@@ -97,25 +97,24 @@ class SLO_Dispatch_Gate {
 			return;
 		}
 
-		// El embudo va PRIMERO: una preventa pagada entra a "Abono
-		// Produccion" aunque tenga saldo -- el saldo se cobra despues de
-		// Preparacion (asi lo define el organigrama operativo). El caso
-		// "saldo pendiente" lo captura SLO_Order_Balance en el mismo hook
-		// (prioridad 10): cualquier intento de quedar en Procesando con
-		// saldo termina en el estado del rol "abono" (Saldo Pendiente).
-		if ( SLO_Order_Snapshot::order_is_preventa( $order )
-			&& '1' !== $order->get_meta( self::META_PASO_LISTO )
+		// REGLA DE EMBUDO UNIVERSAL: a Merch Lista (Procesando) solo se
+		// llega habiendo pasado por Preparacion (donde el pedido se
+		// empaca fisicamente). TODO pago -- preventa o stock, con o sin
+		// saldo -- entra primero a "Abono Produccion". El saldo se cobra
+		// despues de Preparacion: ese caso lo captura SLO_Order_Balance
+		// en el mismo hook (prioridad 10) y lo manda a Saldo Pendiente.
+		if ( '1' !== $order->get_meta( self::META_PASO_LISTO )
 			&& SLO_Order_Statuses::is_mapped( 'produccion' ) ) {
 			$order->update_status(
 				SLO_Order_Statuses::get_status( 'produccion' ),
-				__( 'Puerta de despacho: preventa pagada, entra al embudo de produccion. Llegara a Merch Lista cuando el lote este preparado y el saldo en 0.', 'stylelauri-order-flow' )
+				__( 'Puerta de despacho: pago recibido, entra al embudo. Llegara a Merch Lista despues de pasar por Preparacion (empaque) y con saldo en 0.', 'stylelauri-order-flow' )
 			);
 			return;
 		}
 
-		// Stock inmediato pagado completo (o preventa cuyo lote ya llego):
-		// se queda en Procesando (Merch Lista) -- salvo que tenga saldo,
-		// caso que resuelve el guard de SLO_Order_Balance justo despues.
+		// Pedido que ya paso por Preparacion: se queda en Procesando
+		// (Merch Lista) -- salvo que tenga saldo, caso que resuelve el
+		// guard de SLO_Order_Balance justo despues.
 	}
 
 	/**

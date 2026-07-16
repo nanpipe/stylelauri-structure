@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.6.0
+Stable tag: 1.7.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,13 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.7.0 =
+* EMBUDO UNIVERSAL: a Merch Lista (Procesando) solo se llega habiendo pasado por Preparacion (el pedido empacado). Aplica a TODO pago -- preventa o stock, con o sin saldo: los pagos de Wompi entran siempre a "Abono Produccion". Un salto manual sin pasar por Preparacion se revierte con nota. Junto con la regla de saldo (1.6.0), Merch Lista queda protegida por dos condiciones: empacado + saldo 0.
+* Seguridad (auditoria): "Procesando" ya no puede mapearse como rol -- antes esa configuracion anulaba la puerta de despacho en silencio (un pedido con saldo podia quedar despachable). Se quito del dropdown, se rechaza al guardar y se ignora si ya estaba guardado.
+* Seguridad (auditoria): el descuento del Abono Reserva se lee solo del fee con la etiqueta EXACTA del plugin (antes un match por substring permitia que fees de otros plugins contaminaran el saldo registrado).
+* Seguridad (auditoria): el campo de abono manual valida formato estricto y limites de cordura (una correccion negativa no puede exceder lo abonado; un abono no puede exceder el saldo/valor de la venta); los rechazos quedan como nota del pedido.
+* Seguridad (auditoria): chequeo explicito de capacidad en la accion masiva de recalculo.
 
 = 1.6.0 =
 * REGLA ABSOLUTA: con la puerta de despacho activa, un pedido con saldo sin pagar NUNCA queda en Procesando (Merch Lista), venga de donde venga (pasarela, movimiento manual, cualquier origen). Si el rol "Saldo Pendiente" esta mapeado, el pedido se REDIRIGE alli (y el correo de ese estado cobra al cliente); si no, se revierte al estado anterior con nota.
