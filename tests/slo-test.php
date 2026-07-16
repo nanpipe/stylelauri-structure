@@ -330,9 +330,20 @@ $g4 = wc_get_order( $g4->get_id() );
 slo_check( 'gate: unmapped produccion still kept out of Merch Lista', 'processing' !== $g4->get_status(), $g4->get_status() );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
 
-// ---- 12. Bulk recompute backfill ----
+// ---- 12. Snapshot at creation + bulk recompute backfill ----
+// woocommerce_checkout_create_order path: order object WITH items, not
+// yet saved -- snapshot meta must be set before the first save (fixes:
+// YAYMail emails firing before the meta existed).
 $o5 = wc_create_order();
 $o5->add_product( wc_get_product( $p_jk ), 1 );
+SLO_Order_Snapshot::compute_on_create( $o5 ); // what the checkout hook does
+slo_check( 'snapshot set during order creation (pre-save)', 1 === count( $o5->get_meta( SLO_Order_Snapshot::META_LOTES ) ) && '' !== $o5->get_meta( SLO_Order_Snapshot::META_FECHA ), $o5->get_meta( SLO_Order_Snapshot::META_FECHA ) );
+$o5->save();
+$o5 = wc_get_order( $o5->get_id() );
+
+// Simulate a true pre-plugin order by wiping the meta.
+$o5->delete_meta_data( SLO_Order_Snapshot::META_LOTES );
+$o5->delete_meta_data( SLO_Order_Snapshot::META_FECHA );
 $o5->save();
 $o5 = wc_get_order( $o5->get_id() );
 slo_check( 'pre-plugin order: snapshot meta absent', ! $o5->meta_exists( SLO_Order_Snapshot::META_LOTES ) );

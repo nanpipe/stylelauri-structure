@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.9.0
+Stable tag: 1.9.1
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,9 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.9.1 =
+* Fix: el snapshot de lote/fecha ahora se escribe EN LA CREACION del pedido (woocommerce_checkout_create_order + woocommerce_new_order como red para pedidos creados por la pasarela/API). Antes se calculaba en hooks posteriores y un correo disparado en la primera transicion de estado podia salir sin la fecha de despacho (el editor de YAYMail si la mostraba porque renderiza con el pedido ya completo).
 
 = 1.9.0 =
 * MODELO DE CUOTAS: el saldo ya no vive en un historial paralelo de meta -- se deriva del pedido mismo: saldo = fee del Abono Reserva (diferido) - suma de las lineas "... de cuota". Cada pago recibido es una LINEA real del pedido (fee positivo) que suma al total y aparece sola en los correos; cuando el saldo llega a 0, el total del pedido == la venta completa.

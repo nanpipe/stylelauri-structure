@@ -30,11 +30,21 @@ class SLO_Order_Snapshot {
 	const META_FECHA   = '_slo_fecha_despacho';
 
 	public static function init() {
-		// Pedido creado desde el checkout clasico (shortcode).
-		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'recompute_snapshot' ), 10, 1 );
+		// LO MAS TEMPRANO POSIBLE: en la creacion misma del pedido, antes
+		// del primer save. Garantiza que _slo_fecha_despacho existe desde
+		// el instante cero -- cualquier correo que dispare la pasarela o
+		// una transicion de estado ya encuentra el metadato. (El bug que
+		// motivo esto: el editor de YAYMail mostraba la fecha pero el
+		// correo real salia vacio, porque se generaba antes del snapshot.)
+		add_action( 'woocommerce_checkout_create_order', array( __CLASS__, 'compute_on_create' ), 30, 1 );
 
-		// Pedido creado desde el Checkout Block (Store API) -- el checkout
-		// por defecto de WooCommerce moderno NO dispara el hook clasico.
+		// Red de seguridad para pedidos creados por OTRAS rutas (API de la
+		// pasarela, REST, admin): primer guardado de todo pedido nuevo.
+		add_action( 'woocommerce_new_order', array( __CLASS__, 'recompute_snapshot' ), 20, 1 );
+
+		// Rutas clasicas (redundantes con lo anterior, pero baratas y
+		// cubren ediciones posteriores).
+		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'recompute_snapshot' ), 10, 1 );
 		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'recompute_snapshot_from_order' ), 10, 1 );
 
 		// Pedido creado o editado manualmente desde el admin.
@@ -42,6 +52,18 @@ class SLO_Order_Snapshot {
 
 		// Items editados via AJAX en la pantalla de edicion de pedido.
 		add_action( 'woocommerce_saved_order_items', array( __CLASS__, 'recompute_snapshot' ), 10, 1 );
+	}
+
+	/**
+	 * Snapshot durante la creacion del pedido (objeto aun sin guardar,
+	 * sin ID): solo setea el meta, WooCommerce guarda justo despues.
+	 *
+	 * @param WC_Order $order Pedido en creacion.
+	 */
+	public static function compute_on_create( $order ) {
+		if ( $order instanceof WC_Order ) {
+			self::compute_and_set( $order );
+		}
 	}
 
 	/**
@@ -59,9 +81,9 @@ class SLO_Order_Snapshot {
 	/**
 	 * Recalcula y guarda el snapshot de lotes/fecha para un pedido.
 	 * No hace nada si el pedido ya esta en un estado "cerrado" (ver
-	 * SLO_Order_Statuses::locked_snapshot_statuses()) -- una vez enviado,
-	 * la promesa ya se cumplio o esta en curso, no se debe recalcular
-	 * por una edicion administrativa tardia.
+	 * SLO_Order_Statuses::locked_snapshot_statuses()) -- una vez cerrado,
+	 * la promesa ya se cumplio, no se debe recalcular por una edicion
+	 * administrativa tardia.
 	 *
 	 * @param int $order_id ID del pedido.
 	 */
@@ -76,6 +98,17 @@ class SLO_Order_Snapshot {
 			return;
 		}
 
+		self::compute_and_set( $order );
+		$order->save();
+	}
+
+	/**
+	 * Logica compartida: calcula lotes/fecha desde los items y setea el
+	 * meta en el objeto (sin guardar).
+	 *
+	 * @param WC_Order $order Pedido.
+	 */
+	private static function compute_and_set( $order ) {
 		$lotes_tocados = array(); // slug => fecha_despacho.
 
 		foreach ( $order->get_items( 'line_item' ) as $item ) {
@@ -93,13 +126,8 @@ class SLO_Order_Snapshot {
 			}
 		}
 
-		$slugs = array_keys( $lotes_tocados );
-		$order->update_meta_data( self::META_LOTES, $slugs );
-
-		$fecha_gobernante = self::latest_date( array_values( $lotes_tocados ) );
-		$order->update_meta_data( self::META_FECHA, $fecha_gobernante );
-
-		$order->save();
+		$order->update_meta_data( self::META_LOTES, array_keys( $lotes_tocados ) );
+		$order->update_meta_data( self::META_FECHA, self::latest_date( array_values( $lotes_tocados ) ) );
 	}
 
 	/**
