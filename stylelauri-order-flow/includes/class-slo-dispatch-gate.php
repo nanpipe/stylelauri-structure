@@ -53,12 +53,15 @@ class SLO_Dispatch_Gate {
 	}
 
 	/**
-	 * ¿La puerta de despacho esta activa? (Ajustes, default si.)
+	 * La puerta de despacho es OBLIGATORIA: "processing" (Merch Lista)
+	 * es la etapa de despacho, cableada. Sin interruptor en Ajustes --
+	 * apagarla dejaria pedidos sin empacar o con saldo visibles para
+	 * Skydrops. Queda un filtro como valvula de emergencia para codigo.
 	 *
 	 * @return bool
 	 */
 	public static function is_enabled() {
-		return 'no' !== get_option( SLO_Settings::OPT_DISPATCH_GATE, 'yes' );
+		return (bool) apply_filters( 'slo_dispatch_gate_enabled', true );
 	}
 
 	/**

@@ -6,11 +6,14 @@
  * administra la tienda (con el plugin de estados que prefiera); aqui
  * solo se define QUE ROL cumple cada estado dentro del flujo:
  *
- *   abono      -> pago parcial recibido, falta saldo (correo de abono)
- *   produccion -> preventa esperando su lote (interno, silencioso)
+ *   abono      -> pago parcial recibido, falta saldo
+ *   produccion -> entrada del embudo tras el pago (etiqueta/reserva)
  *   listo      -> preparacion/empaque; con saldo dispara el recordatorio
- *                 y bloquea la salida a Procesando hasta saldo 0
- *   enviado    -> despachado (correo con guia; bloqueado con saldo)
+ *                 y bloquea la salida a Merch Lista hasta saldo 0
+ *
+ * El DESPACHO no es un rol configurable: es SIEMPRE el estado nativo
+ * "processing" (Merch Lista, lo que Skydrops ve). Cableado a proposito
+ * -- mapearlo mal anularia la puerta de despacho.
  *
  * El mapeo se configura en StyleLauri > Ajustes > Estados del pedido.
  * Un rol SIN mapear simplemente desactiva sus automatismos -- nada se
@@ -31,7 +34,7 @@ class SLO_Order_Statuses {
 	 * @return string[]
 	 */
 	public static function roles() {
-		return array( 'abono', 'produccion', 'listo', 'enviado' );
+		return array( 'abono', 'produccion', 'listo' );
 	}
 
 	/**
@@ -44,7 +47,6 @@ class SLO_Order_Statuses {
 			'abono'      => __( 'Saldo Pendiente', 'stylelauri-order-flow' ),
 			'produccion' => __( 'Abono Producción (entrada del embudo)', 'stylelauri-order-flow' ),
 			'listo'      => __( 'Preparación', 'stylelauri-order-flow' ),
-			'enviado'    => __( 'Despacho (opcional)', 'stylelauri-order-flow' ),
 		);
 	}
 
@@ -54,7 +56,7 @@ class SLO_Order_Statuses {
 	 * el rol no esta mapeado -- los consumidores deben tratar vacio como
 	 * "rol desactivado".
 	 *
-	 * @param string $role abono|produccion|listo|enviado.
+	 * @param string $role abono|produccion|listo.
 	 * @return string
 	 */
 	public static function get_status( $role ) {
@@ -112,13 +114,10 @@ class SLO_Order_Statuses {
 	 * @return string[] Sin prefijo wc-.
 	 */
 	public static function locked_snapshot_statuses() {
-		$locked = array( 'completed', 'cancelled', 'refunded' );
-
-		if ( self::is_mapped( 'enviado' ) ) {
-			$locked[] = self::get_status( 'enviado' );
-		}
-
-		return array_unique( $locked );
+		// Solo estados terminales. "processing" (Merch Lista) NO se
+		// congela: la accion masiva de "Recalcular lote(s)" debe poder
+		// backfillear pedidos viejos que estan sentados ahi.
+		return array( 'completed', 'cancelled', 'refunded' );
 	}
 
 	public static function init() {

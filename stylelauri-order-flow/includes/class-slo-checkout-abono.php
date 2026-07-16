@@ -62,9 +62,6 @@ class SLO_Checkout_Abono {
 		// Limpiar la sesion una vez creado el pedido.
 		add_action( 'woocommerce_checkout_order_processed', array( __CLASS__, 'clear_session' ) );
 
-		// Pedido con abono confirmado por la pasarela -> estado "Abono parcial".
-		add_action( 'woocommerce_order_status_processing', array( __CLASS__, 'maybe_move_to_abono' ), 20, 1 );
-
 		// No mandar el email nativo de "Procesando" cuando el de Abono ya aplica.
 		add_filter( 'woocommerce_email_enabled_customer_processing_order', array( __CLASS__, 'suppress_processing_email' ), 10, 2 );
 	}
@@ -318,37 +315,6 @@ class SLO_Checkout_Abono {
 		if ( WC()->session ) {
 			WC()->session->set( self::SESSION_KEY, '0' );
 		}
-	}
-
-	/**
-	 * Cuando la pasarela confirma el pago de un pedido con abono, moverlo
-	 * de "Procesando" a "Abono parcial" -- ese es su estado real: pago
-	 * parcial recibido, falta saldo. Dispara el email de Abono.
-	 *
-	 * @param int $order_id ID del pedido.
-	 */
-	public static function maybe_move_to_abono( $order_id ) {
-		// Con la puerta de despacho activa, el router de SLO_Dispatch_Gate
-		// cubre este caso (y todos los demas pagos parciales, no solo los
-		// del checkout) -- no duplicar la transicion.
-		if ( class_exists( 'SLO_Dispatch_Gate' ) && SLO_Dispatch_Gate::is_enabled() ) {
-			return;
-		}
-
-		$order = wc_get_order( $order_id );
-
-		if ( ! $order || '1' !== $order->get_meta( self::META_FLAG ) ) {
-			return;
-		}
-
-		if ( SLO_Order_Balance::get_saldo_pendiente( $order ) <= 0 || ! SLO_Order_Statuses::is_mapped( 'abono' ) ) {
-			return;
-		}
-
-		$order->update_status(
-			SLO_Order_Statuses::get_status( 'abono' ),
-			__( 'Pedido pagado con Abono Reserva: pasa automaticamente a "Abono parcial".', 'stylelauri-order-flow' )
-		);
 	}
 
 	/**

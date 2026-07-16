@@ -26,7 +26,6 @@ class SLO_Settings {
 	const OPT_ABONO_PERCENT = 'slo_abono_percent';
 	const OPT_ABONO_TITULO  = 'slo_abono_titulo';
 	const OPT_ABONO_TEXTO   = 'slo_abono_texto';
-	const OPT_DISPATCH_GATE = 'slo_dispatch_gate';
 
 	const DEFAULT_PERCENT = 50;
 
@@ -203,18 +202,6 @@ class SLO_Settings {
 			)
 		);
 
-		register_setting(
-			'slo_settings_group',
-			self::OPT_DISPATCH_GATE,
-			array(
-				'type'              => 'string',
-				'default'           => 'yes',
-				'sanitize_callback' => function ( $value ) {
-					return 'yes' === $value ? 'yes' : 'no';
-				},
-			)
-		);
-
 		// Mapeo de roles del ciclo de vida a estados de pedido. Vacio =
 		// rol desactivado (sin automatismos). Solo se aceptan keys de
 		// estado validas ('wc-...').
@@ -327,23 +314,11 @@ class SLO_Settings {
 					</tr>
 				</table>
 
-				<h2><?php esc_html_e( 'Puerta de despacho (Skydrops)', 'stylelauri-order-flow' ); ?></h2>
-				<p class="description" style="max-width:640px;">
-					<?php esc_html_e( 'Con esta opcion activa, "Procesando" queda reservado para pedidos pagados completos y despachables YA (los unicos que Skydrops ve). Los pagos que la pasarela mande a Procesando se reubican solos: con saldo pendiente van a Abono parcial; preventas pagadas van a En produccion; solo el stock inmediato pagado completo se queda en Procesando. Cuando el saldo de un pedido en Listo llega a 0, pasa solo a Procesando.', 'stylelauri-order-flow' ); ?>
-				</p>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><?php esc_html_e( 'Activar puerta de despacho', 'stylelauri-order-flow' ); ?></th>
-						<td>
-							<label>
-								<input type="checkbox" name="<?php echo esc_attr( self::OPT_DISPATCH_GATE ); ?>" value="yes" <?php checked( 'no' !== get_option( self::OPT_DISPATCH_GATE, 'yes' ) ); ?> />
-								<?php esc_html_e( '"Procesando" = pagado completo y listo para despachar', 'stylelauri-order-flow' ); ?>
-							</label>
-						</td>
-					</tr>
-				</table>
-
 				<h2><?php esc_html_e( 'Estados del pedido (roles)', 'stylelauri-order-flow' ); ?></h2>
+				<p class="description" style="max-width:640px;">
+					<strong><?php esc_html_e( 'Despacho = "Procesando" (Merch Lista), cableado y obligatorio.', 'stylelauri-order-flow' ); ?></strong>
+					<?php esc_html_e( 'Es lo unico que Skydrops ve. Solo se llega con el pedido empacado (paso por Preparacion) y saldo en 0; todo pago de pasarela entra primero a la entrada del embudo. Puedes renombrar la etiqueta de "Procesando" con tu plugin de estados -- la clave interna wc-processing no se toca.', 'stylelauri-order-flow' ); ?>
+				</p>
 				<p class="description" style="max-width:640px;">
 					<?php esc_html_e( 'El plugin NO crea estados: los estados los administra la tienda. Aqui se le indica al plugin que estado cumple cada rol del flujo. Un rol "Sin asignar" desactiva sus automatismos (correo, bloqueo, transicion) sin romper nada.', 'stylelauri-order-flow' ); ?>
 				</p>
@@ -354,10 +329,9 @@ class SLO_Settings {
 				<table class="form-table" role="presentation">
 					<?php
 					$role_help = array(
-						'abono'      => __( 'Mapear a "Saldo Pendiente" (wc-saldo-pendiente). REGLA: un pedido con saldo sin pagar NUNCA queda en Merch Lista -- se redirige aqui automaticamente, venga de donde venga. Al quedar el saldo en 0, avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
-						'produccion' => __( 'Mapear a "Abono Produccion" (wc-abono-produccion). La puerta de despacho manda aqui toda preventa pagada (con o sin saldo): el embudo va primero, el saldo se cobra despues de Preparacion. Las etapas "Preventa" y el resto del embudo se mueven a mano.', 'stylelauri-order-flow' ),
-						'listo'      => __( 'Mapear a "Preparacion" (wc-preparacion). Marca que el lote ya llego (habilita la salida a Merch Lista); al quedar saldo 0 avanza solo a Merch Lista (Procesando).', 'stylelauri-order-flow' ),
-						'enviado'    => __( 'Etapa de despacho (opcional). Bloqueada mientras haya saldo pendiente y congela el snapshot de lote/fecha. Como el despacho se maneja aparte, dejala sin asignar.', 'stylelauri-order-flow' ),
+						'abono'      => __( 'Mapear a "Saldo Pendiente" (slug: saldo-pendiente). REGLA: un pedido con saldo sin pagar NUNCA queda en Merch Lista -- se redirige aqui automaticamente, venga de donde venga. Al quedar el saldo en 0, avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
+						'produccion' => __( 'Mapear a "Abono Produccion" (slug: abono-produccion). TODO pago de pasarela entra aqui primero (preventa o stock, con o sin saldo). Las etapas intermedias (Preventa) se mueven a mano.', 'stylelauri-order-flow' ),
+						'listo'      => __( 'Mapear a "Preparacion" (slug: preparacion). Marca que el pedido se empaco (habilita la salida a Merch Lista); al quedar saldo 0 avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :

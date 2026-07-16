@@ -55,10 +55,10 @@ add_filter( 'wc_order_statuses', function ( $statuses ) {
 } );
 
 // Map plugin roles to those statuses (what the user does in Ajustes).
+// Despacho is NOT a role anymore: it is hardwired to 'processing'.
 update_option( 'slo_status_abono', 'wc-st-abono' );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
 update_option( 'slo_status_listo', 'wc-st-prep' );
-update_option( 'slo_status_enviado', 'wc-st-enviado' );
 
 slo_check( 'plugin does NOT register slo-* statuses', ! isset( wc_get_order_statuses()['wc-slo-abono'] ) && ! isset( wc_get_order_statuses()['wc-slo-enviado'] ) );
 slo_check( 'roles mapped to store statuses', 'st-abono' === SLO_Order_Statuses::get_status( 'abono' ) && 'st-prep' === SLO_Order_Statuses::get_status( 'listo' ) );
@@ -146,13 +146,6 @@ $order->update_status( 'st-prep' );
 slo_check( 'slo_saldo_reminder hook fires on mapped listo', 1 === $GLOBALS['slo_reminder_fired'], (string) $GLOBALS['slo_reminder_fired'] );
 slo_check( 'no plugin email on listo transition', 0 === count( slo_mail_subjects() ) );
 
-slo_mail_reset();
-$order->update_status( 'st-enviado' );
-$order = wc_get_order( $oid );
-$subjects = slo_mail_subjects();
-slo_check( 'mapped enviado blocked with saldo, reverted', 'st-prep' === $order->get_status(), $order->get_status() );
-slo_check( 'blocked enviado: zero emails', 0 === count( $subjects ), implode( ' | ', $subjects ) );
-
 // NEVER rule: attempt to reach Merch Lista (processing) with saldo ->
 // REDIRECTED to Saldo Pendiente (mapped abono role), any origin.
 $order->update_status( 'processing' );
@@ -168,17 +161,15 @@ slo_check( 'saldo 0 auto-advances Saldo Pendiente -> Merch Lista', 'processing' 
 slo_check( 'saldo meta persisted for YAYMail (_slo_saldo_pendiente = 0)', '0' === (string) (float) $order->get_meta( '_slo_saldo_pendiente' ), (string) $order->get_meta( '_slo_saldo_pendiente' ) );
 slo_check( 'guia meta available for templates', 'GUIA-XYZ-123' === $order->get_meta( '_slo_guia_envio' ) );
 
-$order->update_status( 'st-enviado' );
+// ---- 7. Snapshot locked only on terminal statuses ----
+slo_check( 'locked list = terminal only (processing NOT locked)', array( 'completed', 'cancelled', 'refunded' ) === array_values( SLO_Order_Statuses::locked_snapshot_statuses() ) );
+$order->update_status( 'completed' );
 $order = wc_get_order( $oid );
-slo_check( 'enviado passes with saldo 0', 'st-enviado' === $order->get_status(), $order->get_status() );
-
-// ---- 7. Snapshot locked on mapped enviado ----
 $before = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
 update_term_meta( $ck_id, 'slo_fecha_despacho', '2026-12-31' );
 SLO_Order_Snapshot::recompute_snapshot( $oid );
 $after = SLO_Order_Snapshot::get_order_fecha_despacho( wc_get_order( $oid ) );
-slo_check( 'snapshot locked once mapped enviado', $before === $after, "$before vs $after" );
-slo_check( 'locked list follows mapping', in_array( 'st-enviado', SLO_Order_Statuses::locked_snapshot_statuses(), true ) );
+slo_check( 'snapshot locked once completed', $before === $after, "$before vs $after" );
 
 // ---- 8. Settings / abono checkout model ----
 slo_check( 'settings: default percent 50', 50.0 === SLO_Settings::get_percent() );

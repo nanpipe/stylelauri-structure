@@ -511,13 +511,12 @@ class SLO_Order_Balance {
 	/**
 	 * Se ejecuta en cada cambio de estado. Hace dos cosas:
 	 *
-	 *  - Si el pedido entra a "Listo" y todavia tiene saldo, dispara
-	 *    'slo_saldo_reminder' para que el modulo de emails mande el
-	 *    recordatorio de saldo.
-	 *  - Si el pedido intenta entrar a "Enviado" con saldo pendiente,
-	 *    revierte al estado anterior y deja una nota interna. WooCommerce
-	 *    no ofrece un filtro "antes de guardar" confiable para transiciones
-	 *    de estado, asi que el patron estandar es revertir justo despues.
+	 *  - Si el pedido entra a "Preparacion" (rol listo) y todavia tiene
+	 *    saldo, dispara 'slo_saldo_reminder' (hook de extension).
+	 *  - Protege Merch Lista (processing) con las dos reglas absolutas
+	 *    del despacho. WooCommerce no ofrece un filtro "antes de guardar"
+	 *    confiable para transiciones de estado, asi que el patron
+	 *    estandar es corregir justo despues.
 	 *
 	 * @param int      $order_id   ID del pedido.
 	 * @param string   $old_status Estado anterior (sin prefijo wc-).
@@ -525,37 +524,22 @@ class SLO_Order_Balance {
 	 * @param WC_Order $order      Pedido.
 	 */
 	public static function guard_and_notify( $order_id, $old_status, $new_status, $order ) {
-		$listo_status   = SLO_Order_Statuses::get_status( 'listo' );
-		$enviado_status = SLO_Order_Statuses::get_status( 'enviado' );
+		$listo_status = SLO_Order_Statuses::get_status( 'listo' );
 
 		$saldo = self::get_saldo_pendiente( $order );
 
-		// El recordatorio solo aplica cuando el pedido ENTRA a "Listo" de
-		// forma normal. Si viene DESDE "Enviado" o "Procesando" es la
-		// reversion de este mismo guard (bloqueo de despacho) -- el
-		// cliente ya recibio su recordatorio cuando el lote paso a Listo,
-		// no duplicar.
-		if ( $listo_status === $new_status
+		// El recordatorio solo aplica cuando el pedido ENTRA a
+		// "Preparacion" de forma normal. Si viene DESDE "Procesando" es
+		// una reversion de este mismo guard -- no duplicar.
+		if ( '' !== $listo_status
+			&& $listo_status === $new_status
 			&& $saldo > 0
-			&& ! in_array( $old_status, array( $enviado_status, 'processing' ), true ) ) {
+			&& 'processing' !== $old_status ) {
 			do_action( 'slo_saldo_reminder', $order, $saldo );
 		}
 
-		if ( $enviado_status === $new_status && $saldo > 0 ) {
-			$order->set_status( $old_status );
-			$order->add_order_note(
-				sprintf(
-					/* translators: %s: formatted balance amount */
-					__( 'Bloqueado el paso a "Enviado": queda un saldo pendiente de %s. Registra el pago del saldo antes de despachar.', 'stylelauri-order-flow' ),
-					wp_strip_all_tags( wc_price( $saldo ) )
-				)
-			);
-			$order->save();
-			return;
-		}
-
-		// REGLAS ABSOLUTAS de Merch Lista (Procesando) con la puerta de
-		// despacho activa, en orden:
+		// REGLAS ABSOLUTAS de Merch Lista (Procesando = etapa de despacho,
+		// cableada, lo que Skydrops ve), en orden:
 		//
 		//  1. Solo se llega habiendo pasado por Preparacion (el pedido
 		//     empacado). Un salto manual sin pasar por ahi se revierte.
@@ -563,9 +547,7 @@ class SLO_Order_Balance {
 		//     SLO_Dispatch_Gate al embudo, prioridad 5 en este hook.)
 		//  2. Con saldo sin pagar NUNCA se queda: se redirige a Saldo
 		//     Pendiente (rol abono) o, sin mapear, se revierte.
-		if ( 'processing' === $new_status
-			&& class_exists( 'SLO_Dispatch_Gate' )
-			&& SLO_Dispatch_Gate::is_enabled() ) {
+		if ( 'processing' === $new_status && class_exists( 'SLO_Dispatch_Gate' ) ) {
 
 			// El router pudo haberlo reubicado ya (embudo de produccion):
 			// si el estado real ya no es processing, no hay nada que hacer.

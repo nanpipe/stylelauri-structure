@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.7.0
+Stable tag: 1.8.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,11 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.8.0 =
+* El despacho ya no es un rol configurable: es SIEMPRE "processing" (Merch Lista), cableado y obligatorio. Se elimino el dropdown "Despacho (opcional)" y el interruptor on/off de la puerta de despacho -- la puerta esta siempre activa (queda el filtro slo_dispatch_gate_enabled como valvula de emergencia para codigo).
+* El snapshot de lote/fecha solo se congela en estados terminales (completado/cancelado/reembolsado): "processing" NO se congela para que la accion masiva de recalculo pueda backfillear pedidos viejos que estan ahi.
+* Ajustes: quedan solo 3 roles (Saldo Pendiente, Abono Produccion, Preparacion) con sus slugs recomendados sin prefijo (el plugin de estados agrega wc- solo): saldo-pendiente, abono-produccion, preparacion.
 
 = 1.7.0 =
 * EMBUDO UNIVERSAL: a Merch Lista (Procesando) solo se llega habiendo pasado por Preparacion (el pedido empacado). Aplica a TODO pago -- preventa o stock, con o sin saldo: los pagos de Wompi entran siempre a "Abono Produccion". Un salto manual sin pasar por Preparacion se revierte con nota. Junto con la regla de saldo (1.6.0), Merch Lista queda protegida por dos condiciones: empacado + saldo 0.
