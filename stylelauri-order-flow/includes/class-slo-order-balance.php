@@ -509,27 +509,46 @@ class SLO_Order_Balance {
 			return;
 		}
 
-		// Con la puerta de despacho activa, "Procesando" significa
-		// "despachable YA" (Skydrops lo ve). Un movimiento MANUAL desde un
-		// estado interno hacia Procesando con saldo pendiente se bloquea
-		// igual que Enviado. (Las entradas desde estados de pago las
-		// reubica el router de SLO_Dispatch_Gate, no este guard.)
-		$produccion_status = SLO_Order_Statuses::get_status( 'produccion' );
-
+		// REGLA ABSOLUTA con la puerta de despacho activa: un pedido con
+		// saldo sin pagar NUNCA queda en Procesando (Merch Lista), venga
+		// de donde venga -- pasarela, movimiento manual, lo que sea.
+		// Si el rol "abono" (Saldo Pendiente) esta mapeado, se REDIRIGE
+		// alli (y el correo de ese estado le cobra al cliente); si no,
+		// se revierte al estado anterior.
 		if ( 'processing' === $new_status
 			&& $saldo > 0
 			&& class_exists( 'SLO_Dispatch_Gate' )
-			&& SLO_Dispatch_Gate::is_enabled()
-			&& in_array( $old_status, array_filter( array( $produccion_status, $listo_status, $enviado_status ) ), true ) ) {
-			$order->set_status( $old_status );
-			$order->add_order_note(
-				sprintf(
-					/* translators: %s: formatted balance amount */
-					__( 'Bloqueado el paso a "Procesando" (despacho): queda un saldo pendiente de %s. Con la puerta de despacho activa, Procesando significa pagado completo y listo para Skydrops.', 'stylelauri-order-flow' ),
-					wp_strip_all_tags( wc_price( $saldo ) )
-				)
-			);
-			$order->save();
+			&& SLO_Dispatch_Gate::is_enabled() ) {
+
+			// El router de SLO_Dispatch_Gate (prioridad 5 en este mismo
+			// hook) pudo haberlo reubicado ya (ej. al embudo de
+			// produccion): si el estado real ya no es processing, listo.
+			if ( 'processing' !== $order->get_status() ) {
+				return;
+			}
+
+			$abono_status = SLO_Order_Statuses::get_status( 'abono' );
+
+			if ( '' !== $abono_status ) {
+				$order->update_status(
+					$abono_status,
+					sprintf(
+						/* translators: %s: formatted balance amount */
+						__( 'No puede quedar en Merch Lista: saldo pendiente de %s. Pasa a Saldo Pendiente hasta completar el pago.', 'stylelauri-order-flow' ),
+						wp_strip_all_tags( wc_price( $saldo ) )
+					)
+				);
+			} else {
+				$order->set_status( $old_status );
+				$order->add_order_note(
+					sprintf(
+						/* translators: %s: formatted balance amount */
+						__( 'Bloqueado el paso a Procesando (Merch Lista): queda un saldo pendiente de %s y el rol "Saldo Pendiente" no esta mapeado.', 'stylelauri-order-flow' ),
+						wp_strip_all_tags( wc_price( $saldo ) )
+					)
+				);
+				$order->save();
+			}
 		}
 	}
 }

@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.5.0
+Stable tag: 1.6.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,12 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.6.0 =
+* REGLA ABSOLUTA: con la puerta de despacho activa, un pedido con saldo sin pagar NUNCA queda en Procesando (Merch Lista), venga de donde venga (pasarela, movimiento manual, cualquier origen). Si el rol "Saldo Pendiente" esta mapeado, el pedido se REDIRIGE alli (y el correo de ese estado cobra al cliente); si no, se revierte al estado anterior con nota.
+* Cambio de orden del router: una preventa pagada entra PRIMERO al embudo ("Abono Produccion"), aunque tenga saldo -- el saldo se cobra despues de Preparacion, como define el organigrama operativo.
+* El avance automatico a Merch Lista con saldo 0 ahora tambien aplica desde "Saldo Pendiente" (antes solo desde Preparacion). Si el pedido es preventa y aun no paso por Preparacion, el router lo devuelve al embudo.
+* Ajustes: roles renombrados a la nomenclatura operativa (Saldo Pendiente, Abono Produccion, Preparacion, Despacho) con los slugs recomendados en la ayuda de cada rol.
 
 = 1.5.0 =
 * Cambio: se eliminan los tres correos propios del plugin (Abono recibido, Recordatorio de saldo, Enviado). Los correos los maneja la tienda con su plugin de estados + YAYMail. El plugin sigue aportando: filas de abonos/saldo en la tabla de totales de todo correo, metadatos insertables en plantillas y el hook 'slo_saldo_reminder'.

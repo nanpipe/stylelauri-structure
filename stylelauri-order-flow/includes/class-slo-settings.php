@@ -341,10 +341,10 @@ class SLO_Settings {
 				<table class="form-table" role="presentation">
 					<?php
 					$role_help = array(
-						'abono'      => __( 'Pago parcial recibido, falta saldo. La puerta de despacho manda aqui los pagos con saldo pendiente.', 'stylelauri-order-flow' ),
-						'produccion' => __( 'Preventa esperando su lote (reserva). La puerta de despacho manda aqui las preventas pagadas.', 'stylelauri-order-flow' ),
-						'listo'      => __( 'Preparacion/empaque, lote ya disponible. Bloqueado hacia Procesando mientras haya saldo; al quedar saldo 0 avanza solo a Procesando (Merch Lista).', 'stylelauri-order-flow' ),
-						'enviado'    => __( 'Etapa de despacho (opcional). Bloqueada mientras haya saldo pendiente y congela el snapshot de lote/fecha. Si manejas el despacho aparte, dejala sin asignar.', 'stylelauri-order-flow' ),
+						'abono'      => __( 'Mapear a "Saldo Pendiente" (wc-saldo-pendiente). REGLA: un pedido con saldo sin pagar NUNCA queda en Merch Lista -- se redirige aqui automaticamente, venga de donde venga. Al quedar el saldo en 0, avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
+						'produccion' => __( 'Mapear a "Abono Produccion" (wc-abono-produccion). La puerta de despacho manda aqui toda preventa pagada (con o sin saldo): el embudo va primero, el saldo se cobra despues de Preparacion. Las etapas "Preventa" y el resto del embudo se mueven a mano.', 'stylelauri-order-flow' ),
+						'listo'      => __( 'Mapear a "Preparacion" (wc-preparacion). Marca que el lote ya llego (habilita la salida a Merch Lista); al quedar saldo 0 avanza solo a Merch Lista (Procesando).', 'stylelauri-order-flow' ),
+						'enviado'    => __( 'Etapa de despacho (opcional). Bloqueada mientras haya saldo pendiente y congela el snapshot de lote/fecha. Como el despacho se maneja aparte, dejala sin asignar.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :

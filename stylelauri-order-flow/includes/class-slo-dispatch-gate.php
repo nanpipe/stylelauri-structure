@@ -97,51 +97,54 @@ class SLO_Dispatch_Gate {
 			return;
 		}
 
-		$saldo = SLO_Order_Balance::get_saldo_pendiente( $order );
-
-		// Con saldo pendiente el pedido no debe quedar despachable; solo
-		// se puede reubicar si el rol "abono" tiene un estado asignado.
-		if ( $saldo > 0 && '' !== $abono_status ) {
-			$order->update_status(
-				$abono_status,
-				__( 'Puerta de despacho: pago parcial recibido, queda saldo pendiente. El pedido no entra a Procesando hasta estar pagado y despachable.', 'stylelauri-order-flow' )
-			);
-			return;
-		}
-
+		// El embudo va PRIMERO: una preventa pagada entra a "Abono
+		// Produccion" aunque tenga saldo -- el saldo se cobra despues de
+		// Preparacion (asi lo define el organigrama operativo). El caso
+		// "saldo pendiente" lo captura SLO_Order_Balance en el mismo hook
+		// (prioridad 10): cualquier intento de quedar en Procesando con
+		// saldo termina en el estado del rol "abono" (Saldo Pendiente).
 		if ( SLO_Order_Snapshot::order_is_preventa( $order )
 			&& '1' !== $order->get_meta( self::META_PASO_LISTO )
 			&& SLO_Order_Statuses::is_mapped( 'produccion' ) ) {
 			$order->update_status(
 				SLO_Order_Statuses::get_status( 'produccion' ),
-				__( 'Puerta de despacho: preventa pagada, pasa a produccion. Entrara a Procesando cuando el lote este listo para despachar.', 'stylelauri-order-flow' )
+				__( 'Puerta de despacho: preventa pagada, entra al embudo de produccion. Llegara a Merch Lista cuando el lote este preparado y el saldo en 0.', 'stylelauri-order-flow' )
 			);
 			return;
 		}
 
 		// Stock inmediato pagado completo (o preventa cuyo lote ya llego):
-		// se queda en Procesando -- despachable, visible para Skydrops.
+		// se queda en Procesando (Merch Lista) -- salvo que tenga saldo,
+		// caso que resuelve el guard de SLO_Order_Balance justo despues.
 	}
 
 	/**
 	 * Llamado por SLO_Order_Balance cuando un abono deja el saldo en 0:
-	 * si el pedido esta en "Listo" (lote llego, estaba cobrandose el
-	 * saldo), avanza solo a Procesando para que Skydrops lo recoja.
+	 * si el pedido estaba en "Preparacion" (rol listo) o en "Saldo
+	 * Pendiente" (rol abono) -- es decir, esperando solo la plata --
+	 * avanza solo a Procesando (Merch Lista) para que Skydrops lo recoja.
 	 *
 	 * @param WC_Order $order Pedido con saldo recien saldado.
 	 */
 	public static function maybe_advance_to_processing( $order ) {
-		if ( ! self::is_enabled() || ! SLO_Order_Statuses::is_mapped( 'listo' ) ) {
+		if ( ! self::is_enabled() ) {
 			return;
 		}
 
-		if ( SLO_Order_Statuses::get_status( 'listo' ) !== $order->get_status() ) {
+		$advance_from = array_filter(
+			array(
+				SLO_Order_Statuses::get_status( 'listo' ),
+				SLO_Order_Statuses::get_status( 'abono' ),
+			)
+		);
+
+		if ( ! in_array( $order->get_status(), $advance_from, true ) ) {
 			return;
 		}
 
 		$order->update_status(
 			'processing',
-			__( 'Saldo en 0 y lote listo: pasa a Procesando para despacho (visible en Skydrops).', 'stylelauri-order-flow' )
+			__( 'Saldo en 0: pasa a Merch Lista (Procesando), visible para despacho en Skydrops.', 'stylelauri-order-flow' )
 		);
 	}
 

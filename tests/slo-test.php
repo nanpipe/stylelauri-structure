@@ -149,17 +149,18 @@ $subjects = slo_mail_subjects();
 slo_check( 'mapped enviado blocked with saldo, reverted', 'st-prep' === $order->get_status(), $order->get_status() );
 slo_check( 'blocked enviado: zero emails', 0 === count( $subjects ), implode( ' | ', $subjects ) );
 
-// Manual jump to processing with saldo -> blocked (dispatch gate guard).
+// NEVER rule: attempt to reach Merch Lista (processing) with saldo ->
+// REDIRECTED to Saldo Pendiente (mapped abono role), any origin.
 $order->update_status( 'processing' );
 $order = wc_get_order( $oid );
-slo_check( 'manual listo->processing blocked with saldo', 'st-prep' === $order->get_status(), $order->get_status() );
+slo_check( 'NEVER rule: listo->processing with saldo redirected to Saldo Pendiente', 'st-abono' === $order->get_status(), $order->get_status() );
 
 // ---- 6. Pay saldo -> auto-advance to processing; saldo meta persisted ----
 $order->update_meta_data( '_slo_guia_envio', 'GUIA-XYZ-123' );
 $order->save();
 SLO_Order_Balance::mark_saldo_paid( $oid ); // registers ledger entry, saldo 0
 $order = wc_get_order( $oid );
-slo_check( 'saldo 0 auto-advances listo -> processing', 'processing' === $order->get_status(), $order->get_status() );
+slo_check( 'saldo 0 auto-advances Saldo Pendiente -> Merch Lista', 'processing' === $order->get_status(), $order->get_status() );
 slo_check( 'saldo meta persisted for YAYMail (_slo_saldo_pendiente = 0)', '0' === (string) (float) $order->get_meta( '_slo_saldo_pendiente' ), (string) $order->get_meta( '_slo_saldo_pendiente' ) );
 slo_check( 'guia meta available for templates', 'GUIA-XYZ-123' === $order->get_meta( '_slo_guia_envio' ) );
 
@@ -200,11 +201,12 @@ $o4 = wc_get_order( $o4->get_id() );
 slo_check( 'abono model: total real = 100', 100.0 === SLO_Order_Balance::get_total_real( $o4 ), (string) SLO_Order_Balance::get_total_real( $o4 ) );
 slo_check( 'abono model: saldo = 50 (deferred)', 50.0 === SLO_Order_Balance::get_saldo_pendiente( $o4 ), (string) SLO_Order_Balance::get_saldo_pendiente( $o4 ) );
 
-// Router: payment lands in processing with saldo -> mapped abono status.
+// Router: paid preventa with saldo -> FUNNEL FIRST (Abono Produccion),
+// not Saldo Pendiente -- saldo is collected after Preparacion.
 slo_mail_reset();
 $o4->update_status( 'processing' );
 $o4 = wc_get_order( $o4->get_id() );
-slo_check( 'gate: saldo order routed to mapped abono', 'st-abono' === $o4->get_status(), $o4->get_status() );
+slo_check( 'gate: preventa with saldo enters funnel first (produccion)', 'st-prod' === $o4->get_status(), $o4->get_status() );
 $has_processing_mail = false;
 foreach ( slo_mail_subjects() as $s ) {
 	if ( false !== stripos( $s, 'procesando' ) || false !== stripos( $s, 'processing' ) ) { $has_processing_mail = true; }
@@ -292,6 +294,44 @@ $g3->update_status( 'processing' );
 $g3 = wc_get_order( $g3->get_id() );
 slo_check( 'gate: unmapped produccion -> preventa stays processing (no crash)', 'processing' === $g3->get_status(), $g3->get_status() );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
+
+// ---- 11b. NEVER rule: saldo can't reach Merch Lista from ANY origin ----
+// Stock order (not preventa) with partial abono, payment flow origin.
+$n1 = wc_create_order();
+$n1->add_product( wc_get_product( $p_stock ), 2 ); // 20
+$n1->set_billing_email( 'never1@stylelauri.test' );
+$n1->calculate_totals();
+$n1->save();
+SLO_Order_Snapshot::recompute_snapshot( $n1->get_id() );
+SLO_Order_Balance::add_abono( $n1, 5, 'manual' ); // saldo 15
+$n1->update_status( 'processing' ); // from pending
+$n1 = wc_get_order( $n1->get_id() );
+slo_check( 'NEVER rule: stock with saldo from pending -> Saldo Pendiente', 'st-abono' === $n1->get_status(), $n1->get_status() );
+
+// From an arbitrary manual origin (on-hold).
+$n1->update_status( 'on-hold' );
+$n1->update_status( 'processing' );
+$n1 = wc_get_order( $n1->get_id() );
+slo_check( 'NEVER rule: from on-hold also redirected', 'st-abono' === $n1->get_status(), $n1->get_status() );
+
+// Saldo paid in Saldo Pendiente -> auto-advances to Merch Lista.
+SLO_Order_Balance::mark_saldo_paid( $n1->get_id() );
+$n1 = wc_get_order( $n1->get_id() );
+slo_check( 'NEVER rule: saldo 0 releases to Merch Lista', 'processing' === $n1->get_status(), $n1->get_status() );
+
+// Abono role UNMAPPED -> reverts instead of redirecting (still never lands).
+delete_option( 'slo_status_abono' );
+$n2 = wc_create_order();
+$n2->add_product( wc_get_product( $p_stock ), 2 );
+$n2->set_billing_email( 'never2@stylelauri.test' );
+$n2->calculate_totals();
+$n2->save();
+SLO_Order_Snapshot::recompute_snapshot( $n2->get_id() );
+SLO_Order_Balance::add_abono( $n2, 5, 'manual' );
+$n2->update_status( 'processing' );
+$n2 = wc_get_order( $n2->get_id() );
+slo_check( 'NEVER rule: unmapped abono role -> reverted, not processing', 'processing' !== $n2->get_status(), $n2->get_status() );
+update_option( 'slo_status_abono', 'wc-st-abono' );
 
 // ---- 12. Bulk recompute backfill ----
 $o5 = wc_create_order();

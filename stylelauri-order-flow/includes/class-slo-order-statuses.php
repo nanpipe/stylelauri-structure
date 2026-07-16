@@ -41,10 +41,10 @@ class SLO_Order_Statuses {
 	 */
 	public static function role_labels() {
 		return array(
-			'abono'      => __( 'Abono pendiente (rol de saldo)', 'stylelauri-order-flow' ),
-			'produccion' => __( 'Producción / reserva de preventa', 'stylelauri-order-flow' ),
-			'listo'      => __( 'Preparación / listo (cobro de saldo)', 'stylelauri-order-flow' ),
-			'enviado'    => __( 'Enviado / despacho (correo con guía)', 'stylelauri-order-flow' ),
+			'abono'      => __( 'Saldo Pendiente', 'stylelauri-order-flow' ),
+			'produccion' => __( 'Abono Producción (entrada del embudo)', 'stylelauri-order-flow' ),
+			'listo'      => __( 'Preparación', 'stylelauri-order-flow' ),
+			'enviado'    => __( 'Despacho (opcional)', 'stylelauri-order-flow' ),
 		);
 	}
 
