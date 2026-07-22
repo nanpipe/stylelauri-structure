@@ -28,6 +28,12 @@
  * Listo a Procesando a mano si funciona (esa es la salida del embudo),
  * pero SLO_Order_Balance lo bloquea si aun hay saldo.
  *
+ * CANDADO DE PREVENTA: un pedido de preventa no puede pasar a Preparacion
+ * (empaque) antes de que su lote este disponible. "Disponible" = la fecha
+ * de despacho prometida ya llego, el lote se marco Producido, o se libero
+ * a mano con el boton del pedido. Mientras siga bloqueado, cualquier
+ * intento de moverlo a Preparacion lo devuelve al embudo (Preventa).
+ *
  * Todo esto se puede apagar en StyleLauri > Ajustes (si algun dia se
  * cambia de transportadora/integracion).
  *
@@ -41,6 +47,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SLO_Dispatch_Gate {
 
 	const META_PASO_LISTO = '_slo_paso_por_listo';
+	// Liberacion manual del candado de preventa (boton del pedido).
+	const META_LIBERADO   = '_slo_preventa_liberado';
+
+	const LIBERAR_ACTION = 'slo_liberar_preventa';
 
 	public static function init() {
 		// Prioridad 5: el router corre antes que el guard de saldo (10) y
@@ -50,6 +60,10 @@ class SLO_Dispatch_Gate {
 		// El email nativo de "Procesando" solo tiene sentido si el pedido
 		// QUEDO en Procesando; si el router lo reubico, se suprime.
 		add_filter( 'woocommerce_email_enabled_customer_processing_order', array( __CLASS__, 'suppress_if_routed' ), 20, 2 );
+
+		// Panel + boton "Liberar a Preparacion" en la pantalla del pedido.
+		add_action( 'woocommerce_admin_order_data_after_order_details', array( __CLASS__, 'render_preventa_lock_panel' ) );
+		add_action( 'admin_post_' . self::LIBERAR_ACTION, array( __CLASS__, 'handle_liberar_preventa' ) );
 	}
 
 	/**
@@ -78,6 +92,17 @@ class SLO_Dispatch_Gate {
 		$listo_status = SLO_Order_Statuses::get_status( 'listo' );
 
 		if ( '' !== $listo_status && $listo_status === $new_status ) {
+			// CANDADO DE PREVENTA: un pedido de preventa no se empaca
+			// (Preparacion) antes de que su lote este disponible. "Disponible"
+			// = fecha de despacho cumplida, lote marcado Producido, o
+			// liberacion manual desde el pedido. Si sigue bloqueado, se
+			// devuelve al embudo (Abono Produccion / Preventa) y NO se marca
+			// el paso por Listo.
+			if ( self::is_preventa_locked( $order ) ) {
+				self::revert_preventa_lock( $order, $old_status );
+				return;
+			}
+
 			$order->update_meta_data( self::META_PASO_LISTO, '1' );
 			$order->save();
 		}
@@ -148,6 +173,227 @@ class SLO_Dispatch_Gate {
 			'processing',
 			__( 'Saldo en 0: pasa a Merch Lista (Procesando), visible para despacho en Skydrops.', 'stylelauri-order-flow' )
 		);
+	}
+
+	// ------------------------------------------------------------------
+	// Candado de preventa (no empacar antes de que el lote llegue)
+	// ------------------------------------------------------------------
+
+	/**
+	 * ¿El pedido esta bloqueado para pasar a Preparacion por ser preventa
+	 * cuyo lote todavia no esta disponible?
+	 *
+	 * Bloqueado = es preventa Y no fue liberado a mano Y ningun/no todos
+	 * sus lotes estan Producidos Y la fecha de despacho prometida aun no
+	 * llega. Cualquiera de esas tres salidas (fecha cumplida, todos los
+	 * lotes Producidos, liberacion manual) lo desbloquea.
+	 *
+	 * @param WC_Order $order Pedido.
+	 * @return bool
+	 */
+	public static function is_preventa_locked( $order ) {
+		if ( ! self::is_enabled() ) {
+			return false;
+		}
+
+		// Stock inmediato nunca se bloquea.
+		if ( ! SLO_Order_Snapshot::order_is_preventa( $order ) ) {
+			return false;
+		}
+
+		// Liberacion manual desde el pedido.
+		if ( '1' === $order->get_meta( self::META_LIBERADO ) ) {
+			return false;
+		}
+
+		// Todos los lotes del pedido marcados Producido.
+		if ( self::all_lotes_producidos( $order ) ) {
+			return false;
+		}
+
+		// Fecha de despacho prometida (snapshot) ya cumplida. Sin fecha no
+		// se puede liberar por tiempo -- queda a merced de Producido/manual.
+		$fecha = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
+		if ( '' !== $fecha && $fecha <= current_time( 'Y-m-d' ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * ¿TODOS los lotes que toca el pedido estan marcados Producido? Un
+	 * pedido sin lotes (stock) devuelve false -- no aplica el candado.
+	 *
+	 * @param WC_Order $order Pedido.
+	 * @return bool
+	 */
+	private static function all_lotes_producidos( $order ) {
+		$lotes = SLO_Order_Snapshot::get_order_lotes( $order );
+
+		if ( empty( $lotes ) ) {
+			return false;
+		}
+
+		foreach ( $lotes as $slug ) {
+			if ( ! SLO_Taxonomy::is_slug_producido( $slug ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Revierte un intento de pasar a Preparacion bloqueado: devuelve el
+	 * pedido a Abono Produccion (rol produccion) o, si no esta mapeado, al
+	 * estado de origen. Deja nota explicando como adelantarlo.
+	 *
+	 * @param WC_Order $order      Pedido.
+	 * @param string   $old_status Estado anterior (sin wc-).
+	 */
+	private static function revert_preventa_lock( $order, $old_status ) {
+		$produccion = SLO_Order_Statuses::get_status( 'produccion' );
+		$destino    = '' !== $produccion ? $produccion : $old_status;
+
+		if ( '' === $destino || $destino === $order->get_status() ) {
+			return;
+		}
+
+		$fecha = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
+
+		$nota = '' !== $fecha
+			? sprintf(
+				/* translators: %s: promised dispatch date */
+				__( 'Bloqueado el paso a Preparacion: pedido de preventa cuya fecha de despacho (%s) aun no llega y el lote no esta marcado como Producido. Se mantiene en Preventa. Usa "Liberar a Preparacion" en el pedido, o marca el lote como Producido, para adelantarlo.', 'stylelauri-order-flow' ),
+				$fecha
+			)
+			: __( 'Bloqueado el paso a Preparacion: pedido de preventa cuyo lote no esta marcado como Producido. Se mantiene en Preventa. Usa "Liberar a Preparacion" o marca el lote como Producido para adelantarlo.', 'stylelauri-order-flow' );
+
+		$order->update_status( $destino, $nota );
+	}
+
+	// ------------------------------------------------------------------
+	// Boton "Liberar a Preparacion"
+	// ------------------------------------------------------------------
+
+	/**
+	 * Panel del candado dentro del panel nativo de datos del pedido. Solo
+	 * se muestra en pedidos de preventa.
+	 *
+	 * @param WC_Order $order Pedido que se esta editando.
+	 */
+	public static function render_preventa_lock_panel( $order ) {
+		if ( ! SLO_Order_Snapshot::order_is_preventa( $order ) ) {
+			return;
+		}
+
+		$fecha    = SLO_Order_Snapshot::get_order_fecha_despacho( $order );
+		$liberado = '1' === $order->get_meta( self::META_LIBERADO );
+		$locked   = self::is_preventa_locked( $order );
+		?>
+		<div class="form-field form-field-wide slo-preventa-lock">
+			<label><?php esc_html_e( 'Preventa', 'stylelauri-order-flow' ); ?></label>
+			<?php if ( $locked ) : ?>
+				<p class="description" style="margin-bottom:8px;">
+					<?php
+					printf(
+						/* translators: %s: promised dispatch date (may be empty) */
+						esc_html__( 'Bloqueado para Preparacion%s. No puede empacarse hasta que el lote este disponible.', 'stylelauri-order-flow' ),
+						'' !== $fecha ? ' ' . sprintf( /* translators: %s: date */ esc_html__( '(despacho %s)', 'stylelauri-order-flow' ), esc_html( $fecha ) ) : ''
+					);
+					?>
+				</p>
+				<p>
+					<a
+						href="<?php echo esc_url( self::get_liberar_url( $order ) ); ?>"
+						class="button button-secondary"
+						onclick="return confirm( '<?php echo esc_js( __( '¿Liberar este pedido a Preparacion antes de que el lote este disponible?', 'stylelauri-order-flow' ) ); ?>' );"
+					>
+						<?php esc_html_e( 'Liberar a Preparación', 'stylelauri-order-flow' ); ?>
+					</a>
+				</p>
+			<?php elseif ( $liberado ) : ?>
+				<p class="description"><?php esc_html_e( 'Liberado manualmente a Preparacion.', 'stylelauri-order-flow' ); ?></p>
+			<?php else : ?>
+				<p class="description"><?php esc_html_e( 'Lote disponible (fecha cumplida o marcado como Producido). Puede pasar a Preparacion.', 'stylelauri-order-flow' ); ?></p>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * URL firmada del boton "Liberar a Preparacion".
+	 *
+	 * @param WC_Order $order Pedido.
+	 * @return string
+	 */
+	private static function get_liberar_url( $order ) {
+		return wp_nonce_url(
+			admin_url( 'admin-post.php?action=' . self::LIBERAR_ACTION . '&order_id=' . $order->get_id() ),
+			self::LIBERAR_ACTION . '_' . $order->get_id()
+		);
+	}
+
+	/**
+	 * Handler del boton: valida nonce y capacidad, libera el candado y
+	 * vuelve a la pantalla del pedido.
+	 */
+	public static function handle_liberar_preventa() {
+		$order_id = isset( $_GET['order_id'] ) ? absint( $_GET['order_id'] ) : 0;
+
+		if ( ! $order_id
+			|| ! isset( $_GET['_wpnonce'] )
+			|| ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), self::LIBERAR_ACTION . '_' . $order_id )
+			|| ! current_user_can( 'edit_shop_orders' ) ) {
+			wp_die( esc_html__( 'Accion no autorizada.', 'stylelauri-order-flow' ) );
+		}
+
+		$order = self::liberar_preventa( $order_id );
+
+		if ( ! $order ) {
+			wp_die( esc_html__( 'Pedido no encontrado.', 'stylelauri-order-flow' ) );
+		}
+
+		wp_safe_redirect( $order->get_edit_order_url() );
+		exit;
+	}
+
+	/**
+	 * Marca el pedido como liberado (desbloquea el candado) y, si esta en
+	 * el embudo de Abono Produccion, lo adelanta a Preparacion. Separado
+	 * del handler HTTP para poder probarse y reutilizarse.
+	 *
+	 * @param int $order_id ID del pedido.
+	 * @return WC_Order|false Pedido actualizado, o false si no existe.
+	 */
+	public static function liberar_preventa( $order_id ) {
+		$order = wc_get_order( $order_id );
+
+		if ( ! $order ) {
+			return false;
+		}
+
+		$order->update_meta_data( self::META_LIBERADO, '1' );
+		$order->add_order_note(
+			__( 'Preventa liberada manualmente: habilitado el paso a Preparacion antes de la fecha de despacho / sin marcar el lote como Producido.', 'stylelauri-order-flow' )
+		);
+		$order->save();
+
+		// Solo adelanta desde el embudo (Abono Produccion): evita saltos
+		// raros desde estados de pago o terminales. Desde otros estados el
+		// candado ya quedo liberado y el admin mueve el pedido a mano.
+		$produccion = SLO_Order_Statuses::get_status( 'produccion' );
+		$listo      = SLO_Order_Statuses::get_status( 'listo' );
+
+		if ( '' !== $listo && '' !== $produccion && $produccion === $order->get_status() ) {
+			$order->update_status(
+				$listo,
+				__( 'Liberado manualmente: pasa a Preparacion.', 'stylelauri-order-flow' )
+			);
+		}
+
+		return wc_get_order( $order_id );
 	}
 
 	/**

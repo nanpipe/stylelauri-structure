@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.9.1
+Stable tag: 1.10.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -42,7 +42,7 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 = Como usarlo =
 
 1. Sube la carpeta `stylelauri-order-flow` a `wp-content/plugins/` y activa el plugin.
-2. Ve a Productos > Lotes de preventa y crea un termino por campana (ej. "JK-Agosto"), con su fecha de cierre y de despacho.
+2. Ve a Productos > Lotes de preventa y crea un termino por campana (ej. "JK-Agosto"), con su fecha de cierre y de despacho. Cuando el lote llegue fisicamente, marca la casilla "Producido" para habilitar el paso a Preparacion de todos sus pedidos aunque la fecha aun no llegue.
 3. En cada producto de preventa, asigna el lote correspondiente en la caja de "Lotes de preventa" (igual que Categorias). Los productos de stock inmediato no llevan ningun lote.
 4. Los pedidos nuevos calculan su lote y fecha automaticamente. Revisa las columnas "Lote(s)" y "Despacho" en WooCommerce > Pedidos, y filtra por lote con el dropdown de arriba del listado.
 5. Registra abonos con el boton "Abonar" del panel del pedido (quedan en el historial con fecha y usuario). El "Numero de guia" se guarda en el mismo panel y queda disponible como metadato para las plantillas de YAYMail.
@@ -52,9 +52,17 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 
 * Exportador: agregar las columnas de lote/fecha/saldo al exportador propio de la tienda usando `SLO_Order_Snapshot::get_order_lotes()`, `get_order_fecha_despacho()` y `SLO_Order_Balance::get_saldo_pendiente()` (o el meta `_slo_saldo_pendiente`).
 * Politica de carrito mixto (stock inmediato + preventa en el mismo pedido): el plugin ya soporta el escenario tecnicamente (fecha gobernante = la mas tardia), pero falta decidir si se permite mezclar en el carrito o se separa en el checkout.
-* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 40+ checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
+* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 64 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.10.0 =
+* CANDADO DE PREVENTA: un pedido de preventa no puede pasar a Preparacion (empaque) antes de que su lote este disponible. Si se intenta, se devuelve al embudo (Abono Produccion / Preventa) con nota, y NO se marca el paso por Listo -- por lo que tampoco puede llegar a Merch Lista. "Disponible" = cualquiera de estas tres salidas:
+  1. La fecha de despacho prometida (snapshot _slo_fecha_despacho) ya llego.
+  2. El lote se marca como **Producido** en Productos > Lotes de preventa (nueva casilla en el termino; libera TODOS los pedidos de ese lote aunque la fecha no haya llegado). Nueva columna "Producido" en el listado de lotes.
+  3. Boton **"Liberar a Preparacion"** en el panel del pedido (por pedido; con confirmacion). Si el pedido esta en Abono Produccion, ademas lo adelanta solo a Preparacion.
+* Los pedidos de stock inmediato nunca se bloquean (no tocan lote). Un pedido multi-lote se libera por fecha solo cuando su fecha gobernante (la mas tardia) llega, o cuando TODOS sus lotes estan Producidos.
+* Nuevos metadatos: term meta `slo_lote_producido` (lote); order meta `_slo_preventa_liberado` (liberacion manual del pedido).
 
 = 1.9.1 =
 * Fix: el snapshot de lote/fecha ahora se escribe EN LA CREACION del pedido (woocommerce_checkout_create_order + woocommerce_new_order como red para pedidos creados por la pasarela/API). Antes se calculaba en hooks posteriores y un correo disparado en la primera transicion de estado podia salir sin la fecha de despacho (el editor de YAYMail si la mostraba porque renderiza con el pedido ya completo).

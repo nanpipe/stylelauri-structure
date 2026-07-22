@@ -30,6 +30,10 @@ class SLO_Taxonomy {
 
 	const META_CIERRE    = 'slo_fecha_cierre';
 	const META_DESPACHO  = 'slo_fecha_despacho';
+	// Bandera "Producido": el lote ya llego / esta empacable aunque la
+	// fecha de despacho aun no llegue. Libera el candado de preventa de
+	// TODOS los pedidos que tocan este lote (ver SLO_Dispatch_Gate).
+	const META_PRODUCIDO = 'slo_lote_producido';
 	const NONCE_ACTION   = 'slo_save_lote_dates';
 	const NONCE_FIELD    = 'slo_lote_dates_nonce';
 
@@ -100,6 +104,13 @@ class SLO_Taxonomy {
 			<input type="date" name="slo_fecha_despacho" id="slo_fecha_despacho" value="" />
 			<p><?php esc_html_e( 'Fecha que se comunica al cliente en el correo/WhatsApp de confirmacion.', 'stylelauri-order-flow' ); ?></p>
 		</div>
+		<div class="form-field">
+			<label for="slo_lote_producido">
+				<input type="checkbox" name="slo_lote_producido" id="slo_lote_producido" value="1" />
+				<?php esc_html_e( 'Producido', 'stylelauri-order-flow' ); ?>
+			</label>
+			<p><?php esc_html_e( 'Marca el lote como llegado/empacable. Libera el paso a Preparacion de sus pedidos aunque la fecha de despacho no haya llegado.', 'stylelauri-order-flow' ); ?></p>
+		</div>
 		<?php
 	}
 
@@ -111,8 +122,9 @@ class SLO_Taxonomy {
 	public static function render_edit_fields( $term ) {
 		wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD );
 
-		$cierre   = get_term_meta( $term->term_id, self::META_CIERRE, true );
-		$despacho = get_term_meta( $term->term_id, self::META_DESPACHO, true );
+		$cierre    = get_term_meta( $term->term_id, self::META_CIERRE, true );
+		$despacho  = get_term_meta( $term->term_id, self::META_DESPACHO, true );
+		$producido = self::is_lote_producido( $term->term_id );
 		?>
 		<tr class="form-field">
 			<th scope="row"><label for="slo_fecha_cierre"><?php esc_html_e( 'Fecha de cierre de pedidos', 'stylelauri-order-flow' ); ?></label></th>
@@ -126,6 +138,16 @@ class SLO_Taxonomy {
 			<td>
 				<input type="date" name="slo_fecha_despacho" id="slo_fecha_despacho" value="<?php echo esc_attr( $despacho ); ?>" />
 				<p class="description"><?php esc_html_e( 'Fecha que se comunica al cliente en el correo/WhatsApp de confirmacion.', 'stylelauri-order-flow' ); ?></p>
+			</td>
+		</tr>
+		<tr class="form-field">
+			<th scope="row"><label for="slo_lote_producido"><?php esc_html_e( 'Producido', 'stylelauri-order-flow' ); ?></label></th>
+			<td>
+				<label>
+					<input type="checkbox" name="slo_lote_producido" id="slo_lote_producido" value="1" <?php checked( $producido ); ?> />
+					<?php esc_html_e( 'El lote ya llego / esta empacable', 'stylelauri-order-flow' ); ?>
+				</label>
+				<p class="description"><?php esc_html_e( 'Libera el paso a Preparacion de los pedidos de este lote aunque la fecha de despacho no haya llegado.', 'stylelauri-order-flow' ); ?></p>
 			</td>
 		</tr>
 		<?php
@@ -156,6 +178,10 @@ class SLO_Taxonomy {
 			$despacho = sanitize_text_field( wp_unslash( $_POST['slo_fecha_despacho'] ) );
 			update_term_meta( $term_id, self::META_DESPACHO, self::sanitize_date( $despacho ) );
 		}
+
+		// Checkbox: presente = '1', ausente = '0'. Se guarda siempre para
+		// permitir DESmarcar un lote que ya se habia dado por producido.
+		update_term_meta( $term_id, self::META_PRODUCIDO, isset( $_POST['slo_lote_producido'] ) ? '1' : '0' );
 	}
 
 	/**
@@ -180,8 +206,9 @@ class SLO_Taxonomy {
 	 * @return array
 	 */
 	public static function term_columns( $columns ) {
-		$columns['slo_cierre']   = __( 'Cierre pedidos', 'stylelauri-order-flow' );
-		$columns['slo_despacho'] = __( 'Despacho', 'stylelauri-order-flow' );
+		$columns['slo_cierre']    = __( 'Cierre pedidos', 'stylelauri-order-flow' );
+		$columns['slo_despacho']  = __( 'Despacho', 'stylelauri-order-flow' );
+		$columns['slo_producido'] = __( 'Producido', 'stylelauri-order-flow' );
 		return $columns;
 	}
 
@@ -199,6 +226,11 @@ class SLO_Taxonomy {
 		}
 		if ( 'slo_despacho' === $column_name ) {
 			return esc_html( get_term_meta( $term_id, self::META_DESPACHO, true ) );
+		}
+		if ( 'slo_producido' === $column_name ) {
+			return self::is_lote_producido( $term_id )
+				? esc_html__( 'Si', 'stylelauri-order-flow' )
+				: '—';
 		}
 		return $content;
 	}
@@ -237,5 +269,30 @@ class SLO_Taxonomy {
 	 */
 	public static function is_preventa_product( $product_id ) {
 		return count( self::get_product_lotes( $product_id ) ) > 0;
+	}
+
+	/**
+	 * ¿El lote (termino) esta marcado como Producido?
+	 *
+	 * @param int $term_id ID del termino.
+	 * @return bool
+	 */
+	public static function is_lote_producido( $term_id ) {
+		return '1' === get_term_meta( $term_id, self::META_PRODUCIDO, true );
+	}
+
+	/**
+	 * Igual que is_lote_producido() pero desde el slug guardado en el
+	 * snapshot del pedido. Termino inexistente = no producido.
+	 *
+	 * @param string $slug Slug del lote.
+	 * @return bool
+	 */
+	public static function is_slug_producido( $slug ) {
+		$term = get_term_by( 'slug', $slug, self::TAXONOMY );
+
+		return ( $term && ! is_wp_error( $term ) )
+			? self::is_lote_producido( $term->term_id )
+			: false;
 	}
 }

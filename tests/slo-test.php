@@ -145,6 +145,12 @@ slo_mail_reset();
 $order->update_status( 'st-abono' );
 slo_check( 'no plugin email on abono transition', 0 === count( slo_mail_subjects() ) );
 
+// Lotes JK/CK marcados Producido: los pedidos de flujo de aqui en
+// adelante NO quedan atrapados por el candado de preventa (que se prueba
+// aparte en la seccion 13 con un lote de fecha futura sin producir).
+update_term_meta( $jk_id, SLO_Taxonomy::META_PRODUCIDO, '1' );
+update_term_meta( $ck_id, SLO_Taxonomy::META_PRODUCIDO, '1' );
+
 // ---- 4. Reminder hook + NEVER rules on main flow ----
 global $slo_reminder_fired;
 $slo_reminder_fired = 0;
@@ -350,6 +356,75 @@ slo_check( 'pre-plugin order: snapshot meta absent', ! $o5->meta_exists( SLO_Ord
 $redirect = SLO_Order_Admin_Columns::handle_bulk_action( 'http://x/wp-admin/admin.php?page=wc-orders', 'slo_recalcular_snapshot', array( $o5->get_id() ) );
 $o5 = wc_get_order( $o5->get_id() );
 slo_check( 'bulk recompute: snapshot backfilled', $o5->meta_exists( SLO_Order_Snapshot::META_LOTES ) && 1 === count( SLO_Order_Snapshot::get_order_lotes( $o5 ) ) );
+
+// ---- 13. Preventa date-lock (no Preparacion before the lote is ready) ----
+$fut    = wp_insert_term( 'FUT-lock-' . time(), 'lote_preventa' );
+$fut_id = $fut['term_id'];
+update_term_meta( $fut_id, 'slo_fecha_despacho', '2099-12-31' ); // far future
+$p_fut  = slo_make_product( 'Preorder FUT test', 60 );
+wp_set_object_terms( $p_fut, array( $fut_id ), 'lote_preventa' );
+
+// Locked order: future date, not produced, not released.
+$l1 = wc_create_order();
+$l1->add_product( wc_get_product( $p_fut ), 1 );
+$l1->set_billing_email( 'lock1@stylelauri.test' );
+$l1->calculate_totals();
+$l1->save();
+SLO_Order_Snapshot::recompute_snapshot( $l1->get_id() );
+$l1 = wc_get_order( $l1->get_id() );
+slo_check( 'lock: preventa with future date is locked', SLO_Dispatch_Gate::is_preventa_locked( $l1 ) );
+$l1->update_status( 'st-prod' );
+$l1->update_status( 'st-prep' ); // try to pack early
+$l1 = wc_get_order( $l1->get_id() );
+slo_check( 'lock: blocked from Preparacion, kept in Preventa', 'st-prod' === $l1->get_status(), $l1->get_status() );
+slo_check( 'lock: paso_por_listo NOT set while locked', '1' !== $l1->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) );
+
+// Override A: mark lote Producido -> unlocks.
+update_term_meta( $fut_id, SLO_Taxonomy::META_PRODUCIDO, '1' );
+$l1 = wc_get_order( $l1->get_id() );
+slo_check( 'lock: Producido lote unlocks the order', ! SLO_Dispatch_Gate::is_preventa_locked( $l1 ) );
+$l1->update_status( 'st-prep' );
+$l1 = wc_get_order( $l1->get_id() );
+slo_check( 'lock: after Producido reaches Preparacion', 'st-prep' === $l1->get_status(), $l1->get_status() );
+slo_check( 'lock: paso_por_listo set once unlocked', '1' === $l1->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) );
+update_term_meta( $fut_id, SLO_Taxonomy::META_PRODUCIDO, '0' ); // reset for next case
+
+// Override B: manual release button.
+$l2 = wc_create_order();
+$l2->add_product( wc_get_product( $p_fut ), 1 );
+$l2->set_billing_email( 'lock2@stylelauri.test' );
+$l2->calculate_totals();
+$l2->save();
+SLO_Order_Snapshot::recompute_snapshot( $l2->get_id() );
+$l2->update_status( 'st-prod' );
+$l2 = wc_get_order( $l2->get_id() );
+slo_check( 'lock: still locked (Producido was reset)', SLO_Dispatch_Gate::is_preventa_locked( $l2 ) );
+SLO_Dispatch_Gate::liberar_preventa( $l2->get_id() );
+$l2 = wc_get_order( $l2->get_id() );
+slo_check( 'lock: manual release advances to Preparacion', 'st-prep' === $l2->get_status(), $l2->get_status() );
+slo_check( 'lock: release flag persisted', '1' === $l2->get_meta( SLO_Dispatch_Gate::META_LIBERADO ) );
+
+// Override C: dispatch date already reached -> not locked.
+$past    = wp_insert_term( 'PAST-lock-' . time(), 'lote_preventa' );
+$past_id = $past['term_id'];
+update_term_meta( $past_id, 'slo_fecha_despacho', '2020-01-01' );
+$p_past  = slo_make_product( 'Past preorder test', 40 );
+wp_set_object_terms( $p_past, array( $past_id ), 'lote_preventa' );
+$l3 = wc_create_order();
+$l3->add_product( wc_get_product( $p_past ), 1 );
+$l3->set_billing_email( 'lock3@stylelauri.test' );
+$l3->calculate_totals();
+$l3->save();
+SLO_Order_Snapshot::recompute_snapshot( $l3->get_id() );
+$l3 = wc_get_order( $l3->get_id() );
+slo_check( 'lock: past dispatch date not locked', ! SLO_Dispatch_Gate::is_preventa_locked( $l3 ) );
+$l3->update_status( 'st-prod' );
+$l3->update_status( 'st-prep' );
+$l3 = wc_get_order( $l3->get_id() );
+slo_check( 'lock: past-date order reaches Preparacion', 'st-prep' === $l3->get_status(), $l3->get_status() );
+
+// Stock-only order is never locked.
+slo_check( 'lock: stock-only order never locked', ! SLO_Dispatch_Gate::is_preventa_locked( $o2 ) );
 
 // ---- Cleanup mapping options ----
 delete_option( 'slo_status_abono' );

@@ -475,9 +475,12 @@ class SLO_Order_Balance {
 
 		// El recordatorio solo aplica cuando el pedido ENTRA a
 		// "Preparacion" de forma normal. Si viene DESDE "Procesando" es
-		// una reversion de este mismo guard -- no duplicar.
+		// una reversion de este mismo guard -- no duplicar. Y si el candado
+		// de preventa (prioridad 5) ya lo devolvio al embudo, el estado en
+		// vivo ya no es Preparacion -- no notificar.
 		if ( '' !== $listo_status
 			&& $listo_status === $new_status
+			&& $listo_status === $order->get_status()
 			&& $saldo > 0
 			&& 'processing' !== $old_status ) {
 			do_action( 'slo_saldo_reminder', $order, $saldo );
