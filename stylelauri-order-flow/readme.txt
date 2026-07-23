@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.10.0
+Stable tag: 1.10.1
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,10 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 64 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.10.1 =
+* Nuevo rol "Preventa": es donde espera el pedido a que llegue su lote (mapealo en StyleLauri > Ajustes al estado "Preventa" de la tienda). El candado ahora deja el pedido bloqueado DONDE ESTE (Preventa o Abono Produccion) en vez de arrastrarlo a Abono Produccion -- porque en Abono Produccion se imprime la etiqueta, y devolverlo ahi la reimprimiria / sacaria el pedido de Preventa.
+* El boton "Liberar a Preparacion" solo AUTOADELANTA a Preparacion cuando el pedido esta en Preventa. Desde Abono Produccion (etiqueta) solo libera el candado, sin mover el pedido -- asi no salta a Preparacion (que asume etiqueta impresa) y se pierde. Desde otros estados igual: solo libera.
 
 = 1.10.0 =
 * CANDADO DE PREVENTA: un pedido de preventa no puede pasar a Preparacion (empaque) antes de que su lote este disponible. Si se intenta, se devuelve al embudo (Abono Produccion / Preventa) con nota, y NO se marca el paso por Listo -- por lo que tampoco puede llegar a Merch Lista. "Disponible" = cualquiera de estas tres salidas:

@@ -32,7 +32,10 @@
  * (empaque) antes de que su lote este disponible. "Disponible" = la fecha
  * de despacho prometida ya llego, el lote se marco Producido, o se libero
  * a mano con el boton del pedido. Mientras siga bloqueado, cualquier
- * intento de moverlo a Preparacion lo devuelve al embudo (Preventa).
+ * intento de moverlo a Preparacion lo DEJA donde estaba (Preventa o Abono
+ * Produccion). El boton "Liberar" solo autoadelanta a Preparacion cuando
+ * el pedido esta en Preventa -- desde Abono Produccion (donde se imprime
+ * la etiqueta) solo libera el candado, para no perder el pedido.
  *
  * Todo esto se puede apagar en StyleLauri > Ajustes (si algun dia se
  * cambia de transportadora/integracion).
@@ -245,16 +248,16 @@ class SLO_Dispatch_Gate {
 	}
 
 	/**
-	 * Revierte un intento de pasar a Preparacion bloqueado: devuelve el
-	 * pedido a Abono Produccion (rol produccion) o, si no esta mapeado, al
-	 * estado de origen. Deja nota explicando como adelantarlo.
+	 * Revierte un intento de pasar a Preparacion bloqueado: DEJA el pedido
+	 * donde estaba (estado de origen). No lo fuerza a Abono Produccion --
+	 * ahi se imprime la etiqueta, y arrastrarlo de vuelta reimprimiria /
+	 * lo sacaria de Preventa. Deja nota explicando como adelantarlo.
 	 *
 	 * @param WC_Order $order      Pedido.
 	 * @param string   $old_status Estado anterior (sin wc-).
 	 */
 	private static function revert_preventa_lock( $order, $old_status ) {
-		$produccion = SLO_Order_Statuses::get_status( 'produccion' );
-		$destino    = '' !== $produccion ? $produccion : $old_status;
+		$destino = $old_status;
 
 		if ( '' === $destino || $destino === $order->get_status() ) {
 			return;
@@ -380,16 +383,18 @@ class SLO_Dispatch_Gate {
 		);
 		$order->save();
 
-		// Solo adelanta desde el embudo (Abono Produccion): evita saltos
-		// raros desde estados de pago o terminales. Desde otros estados el
-		// candado ya quedo liberado y el admin mueve el pedido a mano.
-		$produccion = SLO_Order_Statuses::get_status( 'produccion' );
-		$listo      = SLO_Order_Statuses::get_status( 'listo' );
+		// Solo autoadelanta si el pedido esta en PREVENTA (esperando el
+		// lote). Desde Abono Produccion NO: ahi se imprime la etiqueta, y
+		// saltar a Preparacion (que asume etiqueta impresa) haria perder el
+		// pedido. Desde cualquier otro estado el candado solo queda
+		// liberado y el admin mueve el pedido a mano.
+		$preventa = SLO_Order_Statuses::get_status( 'preventa' );
+		$listo    = SLO_Order_Statuses::get_status( 'listo' );
 
-		if ( '' !== $listo && '' !== $produccion && $produccion === $order->get_status() ) {
+		if ( '' !== $listo && '' !== $preventa && $preventa === $order->get_status() ) {
 			$order->update_status(
 				$listo,
-				__( 'Liberado manualmente: pasa a Preparacion.', 'stylelauri-order-flow' )
+				__( 'Liberado manualmente desde Preventa: pasa a Preparacion.', 'stylelauri-order-flow' )
 			);
 		}
 

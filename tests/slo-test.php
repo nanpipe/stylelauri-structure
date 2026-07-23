@@ -64,21 +64,24 @@ function slo_add_abono_fee( $order, $monto ) {
 
 // ---- 0. Store-side statuses (simulating the user's status plugin) ----
 foreach ( array(
-	'wc-st-abono' => 'Saldo Pendiente',
-	'wc-st-prod'  => 'Abono Produccion',
-	'wc-st-prep'  => 'Preparacion',
+	'wc-st-abono'    => 'Saldo Pendiente',
+	'wc-st-prod'     => 'Abono Produccion',
+	'wc-st-preventa' => 'Preventa',
+	'wc-st-prep'     => 'Preparacion',
 ) as $key => $label ) {
 	register_post_status( $key, array( 'label' => $label, 'public' => false ) );
 }
 add_filter( 'wc_order_statuses', function ( $statuses ) {
-	$statuses['wc-st-abono'] = 'Saldo Pendiente';
-	$statuses['wc-st-prod']  = 'Abono Produccion';
-	$statuses['wc-st-prep']  = 'Preparacion';
+	$statuses['wc-st-abono']    = 'Saldo Pendiente';
+	$statuses['wc-st-prod']     = 'Abono Produccion';
+	$statuses['wc-st-preventa'] = 'Preventa';
+	$statuses['wc-st-prep']     = 'Preparacion';
 	return $statuses;
 } );
 
 update_option( 'slo_status_abono', 'wc-st-abono' );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
+update_option( 'slo_status_preventa', 'wc-st-preventa' );
 update_option( 'slo_status_listo', 'wc-st-prep' );
 
 slo_check( 'plugin does NOT register slo-* statuses', ! isset( wc_get_order_statuses()['wc-slo-abono'] ) );
@@ -358,13 +361,16 @@ $o5 = wc_get_order( $o5->get_id() );
 slo_check( 'bulk recompute: snapshot backfilled', $o5->meta_exists( SLO_Order_Snapshot::META_LOTES ) && 1 === count( SLO_Order_Snapshot::get_order_lotes( $o5 ) ) );
 
 // ---- 13. Preventa date-lock (no Preparacion before the lote is ready) ----
+slo_check( 'preventa role mapped', 'st-preventa' === SLO_Order_Statuses::get_status( 'preventa' ) );
+
 $fut    = wp_insert_term( 'FUT-lock-' . time(), 'lote_preventa' );
 $fut_id = $fut['term_id'];
 update_term_meta( $fut_id, 'slo_fecha_despacho', '2099-12-31' ); // far future
 $p_fut  = slo_make_product( 'Preorder FUT test', 60 );
 wp_set_object_terms( $p_fut, array( $fut_id ), 'lote_preventa' );
 
-// Locked order: future date, not produced, not released.
+// Locked order sitting in Preventa: trying to pack early reverts to
+// Preventa (stays put -- NOT dragged back to Abono Produccion).
 $l1 = wc_create_order();
 $l1->add_product( wc_get_product( $p_fut ), 1 );
 $l1->set_billing_email( 'lock1@stylelauri.test' );
@@ -373,13 +379,25 @@ $l1->save();
 SLO_Order_Snapshot::recompute_snapshot( $l1->get_id() );
 $l1 = wc_get_order( $l1->get_id() );
 slo_check( 'lock: preventa with future date is locked', SLO_Dispatch_Gate::is_preventa_locked( $l1 ) );
-$l1->update_status( 'st-prod' );
+$l1->update_status( 'st-preventa' );
 $l1->update_status( 'st-prep' ); // try to pack early
 $l1 = wc_get_order( $l1->get_id() );
-slo_check( 'lock: blocked from Preparacion, kept in Preventa', 'st-prod' === $l1->get_status(), $l1->get_status() );
+slo_check( 'lock: blocked, stays in Preventa (not dragged to Produccion)', 'st-preventa' === $l1->get_status(), $l1->get_status() );
 slo_check( 'lock: paso_por_listo NOT set while locked', '1' !== $l1->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) );
 
-// Override A: mark lote Producido -> unlocks.
+// Lock also blocks from Abono Produccion, staying there.
+$l1b = wc_create_order();
+$l1b->add_product( wc_get_product( $p_fut ), 1 );
+$l1b->set_billing_email( 'lock1b@stylelauri.test' );
+$l1b->calculate_totals();
+$l1b->save();
+SLO_Order_Snapshot::recompute_snapshot( $l1b->get_id() );
+$l1b->update_status( 'st-prod' );
+$l1b->update_status( 'st-prep' );
+$l1b = wc_get_order( $l1b->get_id() );
+slo_check( 'lock: blocked from Abono Produccion, stays there', 'st-prod' === $l1b->get_status(), $l1b->get_status() );
+
+// Override A: mark lote Producido -> unlocks; reaches Preparacion.
 update_term_meta( $fut_id, SLO_Taxonomy::META_PRODUCIDO, '1' );
 $l1 = wc_get_order( $l1->get_id() );
 slo_check( 'lock: Producido lote unlocks the order', ! SLO_Dispatch_Gate::is_preventa_locked( $l1 ) );
@@ -389,20 +407,39 @@ slo_check( 'lock: after Producido reaches Preparacion', 'st-prep' === $l1->get_s
 slo_check( 'lock: paso_por_listo set once unlocked', '1' === $l1->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) );
 update_term_meta( $fut_id, SLO_Taxonomy::META_PRODUCIDO, '0' ); // reset for next case
 
-// Override B: manual release button.
+// Override B: manual release FROM PREVENTA -> auto-advances to Preparacion.
 $l2 = wc_create_order();
 $l2->add_product( wc_get_product( $p_fut ), 1 );
 $l2->set_billing_email( 'lock2@stylelauri.test' );
 $l2->calculate_totals();
 $l2->save();
 SLO_Order_Snapshot::recompute_snapshot( $l2->get_id() );
-$l2->update_status( 'st-prod' );
+$l2->update_status( 'st-preventa' );
 $l2 = wc_get_order( $l2->get_id() );
 slo_check( 'lock: still locked (Producido was reset)', SLO_Dispatch_Gate::is_preventa_locked( $l2 ) );
 SLO_Dispatch_Gate::liberar_preventa( $l2->get_id() );
 $l2 = wc_get_order( $l2->get_id() );
-slo_check( 'lock: manual release advances to Preparacion', 'st-prep' === $l2->get_status(), $l2->get_status() );
+slo_check( 'lock: release from Preventa advances to Preparacion', 'st-prep' === $l2->get_status(), $l2->get_status() );
 slo_check( 'lock: release flag persisted', '1' === $l2->get_meta( SLO_Dispatch_Gate::META_LIBERADO ) );
+
+// Override B2: manual release FROM ABONO PRODUCCION -> only unlocks, does
+// NOT auto-advance (etiqueta stage: jumping to Preparacion loses it).
+$l4 = wc_create_order();
+$l4->add_product( wc_get_product( $p_fut ), 1 );
+$l4->set_billing_email( 'lock4@stylelauri.test' );
+$l4->calculate_totals();
+$l4->save();
+SLO_Order_Snapshot::recompute_snapshot( $l4->get_id() );
+$l4->update_status( 'st-prod' );
+$l4 = wc_get_order( $l4->get_id() );
+slo_check( 'lock: locked in Abono Produccion', SLO_Dispatch_Gate::is_preventa_locked( $l4 ) );
+SLO_Dispatch_Gate::liberar_preventa( $l4->get_id() );
+$l4 = wc_get_order( $l4->get_id() );
+slo_check( 'lock: release from Abono Produccion does NOT auto-advance', 'st-prod' === $l4->get_status(), $l4->get_status() );
+slo_check( 'lock: released order no longer locked', ! SLO_Dispatch_Gate::is_preventa_locked( $l4 ) );
+$l4->update_status( 'st-prep' ); // now movable by hand
+$l4 = wc_get_order( $l4->get_id() );
+slo_check( 'lock: released order can then be moved to Preparacion', 'st-prep' === $l4->get_status(), $l4->get_status() );
 
 // Override C: dispatch date already reached -> not locked.
 $past    = wp_insert_term( 'PAST-lock-' . time(), 'lote_preventa' );
@@ -429,6 +466,7 @@ slo_check( 'lock: stock-only order never locked', ! SLO_Dispatch_Gate::is_preven
 // ---- Cleanup mapping options ----
 delete_option( 'slo_status_abono' );
 delete_option( 'slo_status_produccion' );
+delete_option( 'slo_status_preventa' );
 delete_option( 'slo_status_listo' );
 
 // ---- Summary ----

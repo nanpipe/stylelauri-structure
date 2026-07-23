@@ -7,7 +7,11 @@
  * solo se define QUE ROL cumple cada estado dentro del flujo:
  *
  *   abono      -> pago parcial recibido, falta saldo
- *   produccion -> entrada del embudo tras el pago (etiqueta/reserva)
+ *   produccion -> entrada del embudo tras el pago; aqui se imprime la
+ *                 etiqueta (todo pago de pasarela cae aqui primero)
+ *   preventa   -> pedido en espera de que llegue su lote. Es donde queda
+ *                 "atrapado" el candado de preventa; desde aqui (y solo
+ *                 aqui) el boton "Liberar" lo adelanta a Preparacion
  *   listo      -> preparacion/empaque; con saldo dispara el recordatorio
  *                 y bloquea la salida a Merch Lista hasta saldo 0
  *
@@ -34,7 +38,7 @@ class SLO_Order_Statuses {
 	 * @return string[]
 	 */
 	public static function roles() {
-		return array( 'abono', 'produccion', 'listo' );
+		return array( 'abono', 'produccion', 'preventa', 'listo' );
 	}
 
 	/**
@@ -45,7 +49,8 @@ class SLO_Order_Statuses {
 	public static function role_labels() {
 		return array(
 			'abono'      => __( 'Saldo Pendiente', 'stylelauri-order-flow' ),
-			'produccion' => __( 'Abono Producción (entrada del embudo)', 'stylelauri-order-flow' ),
+			'produccion' => __( 'Abono Producción (entrada / etiqueta)', 'stylelauri-order-flow' ),
+			'preventa'   => __( 'Preventa (en espera del lote)', 'stylelauri-order-flow' ),
 			'listo'      => __( 'Preparación', 'stylelauri-order-flow' ),
 		);
 	}
