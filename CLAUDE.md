@@ -2,6 +2,29 @@
 
 WooCommerce plugin in `stylelauri-order-flow/`. Live test env at `C:\wp-demo` (WooCommerce + SQLite + wp-cli, PHP at `C:\php83`).
 
+## Domain context (why this plugin exists)
+
+StyleLauri.com — K-pop merch store selling both immediate stock and **presale-by-lot** campaigns. The core problem: a single "order status" was encoding 5 things at once (lifecycle stage, delivery method, campaign/lote, payment state, production). This plugin splits those apart. Non-obvious external constraints that drive the whole design:
+
+- **Skydrops** (courier integration) only sees orders in the native `processing` status. So `processing` ("Merch Lista") is the FINAL, dispatchable stage — nothing internal may sit there.
+- **Wompi** (payment gateway) auto-moves any paid order to `processing`. So a "dispatch gate" router must intercept those and funnel them back into the pipeline first.
+- **YAYMail** owns all customer emails. The plugin creates NO emails — it only exposes order metadata + totals rows for templates, and fires the `slo_saldo_reminder` hook.
+- Runs on **HPOS** (custom order tables).
+
+## Architecture invariants (don't break these)
+
+- The plugin creates NO order statuses. The STORE creates them (via its status plugin); the plugin only maps store statuses to lifecycle ROLES in StyleLauri > Ajustes. Roles: `abono`, `produccion`, `preventa`, `listo`, `boletas` (see `SLO_Order_Statuses::roles()`).
+- Dispatch is HARDWIRED to native `processing`, mandatory (not a role). Mapping any role to `processing` is rejected everywhere (`get_status()` returns '' for it) — it would silently defeat the gate.
+- Two absolute Merch Lista rules: an order NEVER reaches `processing` (a) without passing through Preparación (packing, `_slo_paso_por_listo`), or (b) with an unpaid balance.
+- Balance = derived from order fee lines (cuota model): saldo = Abono Reserva negative fee − sum of "… de cuota" positive fees. Not a parallel meta ledger.
+- Snapshot (`_slo_lotes_pedido` + governing/latest `_slo_fecha_despacho`) is written at order creation and is deliberately frozen once terminal (`completed`/`cancelled`/`refunded`).
+- Preventa lock: a presale order can't enter Preparación until its lote is ready — governing dispatch date reached, lote marked **Producido** (term meta `slo_lote_producido`), or per-order manual release (`_slo_preventa_liberado`). A blocked move leaves the order WHERE IT IS (don't drag it back to Abono Producción — that's the label-printing stage). The "Liberar" button auto-advances to Preparación ONLY from the Preventa status.
+- Eventos exception: an order whose line items are ALL in the configured events category diverts to the `boletas` role on payment and skips the physical funnel. A mixed order (event + merch) follows the normal funnel. Needs the `boletas` role mapped and a category set.
+
+Recommended store status slugs per role (the store adds the `wc-` prefix): `abono`→saldo-pendiente, `produccion`→abono-produccion, `preventa`→preventa, `listo`→preparacion, `boletas`→boletas.
+
+Lifecycle flow: Pago → **Abono Producción** (print label) → *(manual)* **Preventa** (waiting for lote) → **Preparación** (packing) → **Merch Lista** (`processing`, Skydrops dispatch). Branches: unpaid balance → **Saldo Pendiente**; 100%-events order → **Boletas** (out of the physical funnel).
+
 ## Building the install zip (READ THIS — recurring trap)
 
 The Bash tool runs git-bash, whose `tar` is **GNU tar** — it makes a tarball even when the file is named `.zip`, and WordPress rejects it with "Archivo incompatible / Incompatible Archive". Only libarchive **bsdtar** produces a real zip.
