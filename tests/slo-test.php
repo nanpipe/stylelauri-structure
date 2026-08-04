@@ -68,6 +68,7 @@ foreach ( array(
 	'wc-st-prod'     => 'Abono Produccion',
 	'wc-st-preventa' => 'Preventa',
 	'wc-st-prep'     => 'Preparacion',
+	'wc-st-boletas'  => 'Boletas',
 ) as $key => $label ) {
 	register_post_status( $key, array( 'label' => $label, 'public' => false ) );
 }
@@ -76,6 +77,7 @@ add_filter( 'wc_order_statuses', function ( $statuses ) {
 	$statuses['wc-st-prod']     = 'Abono Produccion';
 	$statuses['wc-st-preventa'] = 'Preventa';
 	$statuses['wc-st-prep']     = 'Preparacion';
+	$statuses['wc-st-boletas']  = 'Boletas';
 	return $statuses;
 } );
 
@@ -83,6 +85,8 @@ update_option( 'slo_status_abono', 'wc-st-abono' );
 update_option( 'slo_status_produccion', 'wc-st-prod' );
 update_option( 'slo_status_preventa', 'wc-st-preventa' );
 update_option( 'slo_status_listo', 'wc-st-prep' );
+update_option( 'slo_status_boletas', 'wc-st-boletas' );
+update_option( 'slo_eventos_cat', 'eventos' );
 
 slo_check( 'plugin does NOT register slo-* statuses', ! isset( wc_get_order_statuses()['wc-slo-abono'] ) );
 slo_check( 'roles mapped to store statuses', 'st-abono' === SLO_Order_Statuses::get_status( 'abono' ) && 'st-prep' === SLO_Order_Statuses::get_status( 'listo' ) );
@@ -463,11 +467,72 @@ slo_check( 'lock: past-date order reaches Preparacion', 'st-prep' === $l3->get_s
 // Stock-only order is never locked.
 slo_check( 'lock: stock-only order never locked', ! SLO_Dispatch_Gate::is_preventa_locked( $o2 ) );
 
+// ---- 14. Eventos exception: 100% event orders divert to Boletas ----
+slo_check( 'boletas role mapped', 'st-boletas' === SLO_Order_Statuses::get_status( 'boletas' ) );
+
+$ev_cat = wp_insert_term( 'Eventos', 'product_cat', array( 'slug' => 'eventos' ) );
+$ev_cat_id = is_wp_error( $ev_cat ) ? get_term_by( 'slug', 'eventos', 'product_cat' )->term_id : $ev_cat['term_id'];
+
+// Virtual ticket product in the Eventos category.
+$p_boleta = slo_make_product( 'Boleta Concierto test', 120 );
+$vp = wc_get_product( $p_boleta );
+$vp->set_virtual( true );
+$vp->save();
+wp_set_object_terms( $p_boleta, array( $ev_cat_id ), 'product_cat' );
+
+// Pure event order -> diverted to Boletas on payment, out of the funnel.
+$e1 = wc_create_order();
+$e1->add_product( wc_get_product( $p_boleta ), 2 );
+$e1->set_billing_email( 'event1@stylelauri.test' );
+$e1->calculate_totals();
+$e1->save();
+SLO_Order_Snapshot::recompute_snapshot( $e1->get_id() );
+$e1 = wc_get_order( $e1->get_id() );
+slo_check( 'eventos: order detected as 100% eventos', SLO_Dispatch_Gate::order_is_eventos( $e1 ) );
+$e1->update_status( 'processing' ); // what Wompi does on payment
+$e1 = wc_get_order( $e1->get_id() );
+slo_check( 'eventos: paid event order diverted to Boletas', 'st-boletas' === $e1->get_status(), $e1->get_status() );
+slo_check( 'eventos: NOT marked paso_por_listo', '1' !== $e1->get_meta( SLO_Dispatch_Gate::META_PASO_LISTO ) );
+
+// Mixed order (event + physical merch) is NOT pure eventos -> normal funnel.
+$e2 = wc_create_order();
+$e2->add_product( wc_get_product( $p_boleta ), 1 );
+$e2->add_product( wc_get_product( $p_stock ), 1 );
+$e2->set_billing_email( 'event2@stylelauri.test' );
+$e2->calculate_totals();
+$e2->save();
+SLO_Order_Snapshot::recompute_snapshot( $e2->get_id() );
+$e2 = wc_get_order( $e2->get_id() );
+slo_check( 'eventos: mixed order NOT treated as eventos', ! SLO_Dispatch_Gate::order_is_eventos( $e2 ) );
+$e2->update_status( 'processing' );
+$e2 = wc_get_order( $e2->get_id() );
+slo_check( 'eventos: mixed order enters normal funnel (Abono Produccion)', 'st-prod' === $e2->get_status(), $e2->get_status() );
+
+// Boletas role unmapped -> event order follows normal funnel.
+delete_option( 'slo_status_boletas' );
+$e3 = wc_create_order();
+$e3->add_product( wc_get_product( $p_boleta ), 1 );
+$e3->set_billing_email( 'event3@stylelauri.test' );
+$e3->calculate_totals();
+$e3->save();
+SLO_Order_Snapshot::recompute_snapshot( $e3->get_id() );
+$e3->update_status( 'processing' );
+$e3 = wc_get_order( $e3->get_id() );
+slo_check( 'eventos: unmapped Boletas role -> normal funnel', 'st-prod' === $e3->get_status(), $e3->get_status() );
+update_option( 'slo_status_boletas', 'wc-st-boletas' );
+
+// "Sin desvio" (empty category) disables detection even with role mapped.
+update_option( 'slo_eventos_cat', '' );
+slo_check( 'eventos: empty category disables detection', ! SLO_Dispatch_Gate::order_is_eventos( wc_get_order( $e1->get_id() ) ) );
+update_option( 'slo_eventos_cat', 'eventos' );
+
 // ---- Cleanup mapping options ----
 delete_option( 'slo_status_abono' );
 delete_option( 'slo_status_produccion' );
 delete_option( 'slo_status_preventa' );
 delete_option( 'slo_status_listo' );
+delete_option( 'slo_status_boletas' );
+delete_option( 'slo_eventos_cat' );
 
 // ---- Summary ----
 $all  = $GLOBALS['slo_results'];

@@ -14,6 +14,9 @@
  *                 aqui) el boton "Liberar" lo adelanta a Preparacion
  *   listo      -> preparacion/empaque; con saldo dispara el recordatorio
  *                 y bloquea la salida a Merch Lista hasta saldo 0
+ *   boletas    -> pedidos 100% de eventos (boletas virtuales, categoria
+ *                 Eventos). NO entran al embudo fisico ni a Skydrops: al
+ *                 pagarse se desvian aqui y se quedan.
  *
  * El DESPACHO no es un rol configurable: es SIEMPRE el estado nativo
  * "processing" (Merch Lista, lo que Skydrops ve). Cableado a proposito
@@ -38,7 +41,7 @@ class SLO_Order_Statuses {
 	 * @return string[]
 	 */
 	public static function roles() {
-		return array( 'abono', 'produccion', 'preventa', 'listo' );
+		return array( 'abono', 'produccion', 'preventa', 'listo', 'boletas' );
 	}
 
 	/**
@@ -52,6 +55,7 @@ class SLO_Order_Statuses {
 			'produccion' => __( 'Abono Producción (entrada / etiqueta)', 'stylelauri-order-flow' ),
 			'preventa'   => __( 'Preventa (en espera del lote)', 'stylelauri-order-flow' ),
 			'listo'      => __( 'Preparación', 'stylelauri-order-flow' ),
+			'boletas'    => __( 'Boletas (pedidos de eventos)', 'stylelauri-order-flow' ),
 		);
 	}
 

@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.10.1
+Stable tag: 1.11.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,11 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 64 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.11.0 =
+* EXCEPCION EVENTOS: los pedidos de boletas de evento (productos virtuales de la categoria "Eventos") no entran al embudo fisico. Al pagarse (cuando la pasarela los manda a Procesando) se desvian al nuevo rol "Boletas" y se quedan ahi -- no pasan por Abono Produccion, Preparacion ni Merch Lista (no se despachan por Skydrops).
+* Nuevo rol "Boletas": mapealo en StyleLauri > Ajustes al estado de la tienda con slug "boletas".
+* Nuevo ajuste "Categoria de eventos" (StyleLauri > Ajustes): dropdown de categorias de producto, default la categoria con slug "eventos". Solo se desvia un pedido cuyos items sean TODOS de esa categoria; un pedido mixto (evento + merch) sigue el flujo normal porque la parte fisica necesita despacho. El desvio requiere el rol "Boletas" mapeado (sin mapear, o con "Sin desvio", los pedidos de eventos siguen el flujo normal).
 
 = 1.10.1 =
 * Nuevo rol "Preventa": es donde espera el pedido a que llegue su lote (mapealo en StyleLauri > Ajustes al estado "Preventa" de la tienda). El candado ahora deja el pedido bloqueado DONDE ESTE (Preventa o Abono Produccion) en vez de arrastrarlo a Abono Produccion -- porque en Abono Produccion se imprime la etiqueta, y devolverlo ahi la reimprimiria / sacaria el pedido de Preventa.

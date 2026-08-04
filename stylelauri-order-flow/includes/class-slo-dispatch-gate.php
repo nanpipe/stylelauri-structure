@@ -14,6 +14,7 @@
  * El router intercepta cada entrada a Procesando que venga de un flujo
  * de pago (pending / on-hold / failed / abono) y lo reubica:
  *
+ *   pedido 100% eventos (boletas)       -> rol "boletas", fuera del embudo
  *   saldo > 0                          -> Abono parcial
  *   preventa que no ha pasado por Listo -> En produccion
  *   stock inmediato pagado completo     -> se queda en Procesando
@@ -125,6 +126,19 @@ class SLO_Dispatch_Gate {
 		}
 
 		if ( ! in_array( $old_status, $payment_origins, true ) ) {
+			return;
+		}
+
+		// EXCEPCION EVENTOS: un pedido 100% de la categoria de eventos son
+		// boletas virtuales -- no se empacan ni se despachan por Skydrops.
+		// Al pagarse se desvian al rol "boletas" y se quedan ahi, fuera del
+		// embudo fisico. Requiere el rol mapeado; si no, siguen el flujo
+		// normal.
+		if ( self::order_is_eventos( $order ) && SLO_Order_Statuses::is_mapped( 'boletas' ) ) {
+			$order->update_status(
+				SLO_Order_Statuses::get_status( 'boletas' ),
+				__( 'Pedido de eventos (boletas virtuales): se desvia fuera del embudo de despacho. No pasa por Preparacion ni Merch Lista.', 'stylelauri-order-flow' )
+			);
 			return;
 		}
 
@@ -274,6 +288,42 @@ class SLO_Dispatch_Gate {
 			: __( 'Bloqueado el paso a Preparacion: pedido de preventa cuyo lote no esta marcado como Producido. Se mantiene en Preventa. Usa "Liberar a Preparacion" o marca el lote como Producido para adelantarlo.', 'stylelauri-order-flow' );
 
 		$order->update_status( $destino, $nota );
+	}
+
+	/**
+	 * ¿El pedido es 100% de eventos (boletas virtuales)? Verdadero solo si
+	 * TODOS sus line items pertenecen a la categoria de eventos configurada
+	 * -- un pedido mixto (evento + merch fisica) sigue el embudo normal
+	 * porque la parte fisica si necesita empaque/despacho.
+	 *
+	 * @param WC_Order $order Pedido.
+	 * @return bool
+	 */
+	public static function order_is_eventos( $order ) {
+		if ( ! class_exists( 'SLO_Settings' ) ) {
+			return false;
+		}
+
+		$cat = SLO_Settings::get_eventos_category();
+
+		if ( '' === $cat ) {
+			return false;
+		}
+
+		$items = $order->get_items( 'line_item' );
+
+		if ( empty( $items ) ) {
+			return false;
+		}
+
+		foreach ( $items as $item ) {
+			/** @var WC_Order_Item_Product $item */
+			if ( ! has_term( $cat, 'product_cat', $item->get_product_id() ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	// ------------------------------------------------------------------

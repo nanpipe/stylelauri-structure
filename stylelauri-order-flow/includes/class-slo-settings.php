@@ -26,8 +26,10 @@ class SLO_Settings {
 	const OPT_ABONO_PERCENT = 'slo_abono_percent';
 	const OPT_ABONO_TITULO  = 'slo_abono_titulo';
 	const OPT_ABONO_TEXTO   = 'slo_abono_texto';
+	const OPT_EVENTOS_CAT   = 'slo_eventos_cat';
 
-	const DEFAULT_PERCENT = 50;
+	const DEFAULT_PERCENT     = 50;
+	const DEFAULT_EVENTOS_CAT = 'eventos';
 
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'register_menu' ) );
@@ -93,6 +95,19 @@ class SLO_Settings {
 		}
 
 		return str_replace( '{percent}', self::format_percent(), $texto );
+	}
+
+	/**
+	 * Slug de la categoria de productos que marca un pedido como "evento"
+	 * (boletas virtuales). Un pedido 100% de esta categoria se desvia al
+	 * rol "boletas" en vez de entrar al embudo fisico. Default: 'eventos'.
+	 *
+	 * @return string
+	 */
+	public static function get_eventos_category() {
+		// Default 'eventos' SOLO cuando la opcion nunca se guardo. Si el
+		// usuario elige "Sin desvio" (guarda ''), se respeta como apagado.
+		return (string) get_option( self::OPT_EVENTOS_CAT, self::DEFAULT_EVENTOS_CAT );
 	}
 
 	/**
@@ -199,6 +214,16 @@ class SLO_Settings {
 				'type'              => 'string',
 				'default'           => '',
 				'sanitize_callback' => 'sanitize_text_field',
+			)
+		);
+
+		register_setting(
+			'slo_settings_group',
+			self::OPT_EVENTOS_CAT,
+			array(
+				'type'              => 'string',
+				'default'           => '',
+				'sanitize_callback' => 'sanitize_title',
 			)
 		);
 
@@ -333,6 +358,7 @@ class SLO_Settings {
 						'produccion' => __( 'Mapear a "Abono Produccion" (slug: abono-produccion). TODO pago de pasarela entra aqui primero (preventa o stock, con o sin saldo). Aqui se imprime la etiqueta; luego se mueve a mano a Preventa.', 'stylelauri-order-flow' ),
 						'preventa'   => __( 'Mapear a "Preventa" (slug: preventa). Donde espera el pedido a que llegue su lote. El candado de preventa lo mantiene aqui: no puede pasar a Preparacion hasta que la fecha de despacho llegue, el lote se marque Producido, o se use el boton "Liberar a Preparacion" (que solo autoadelanta desde este estado).', 'stylelauri-order-flow' ),
 						'listo'      => __( 'Mapear a "Preparacion" (slug: preparacion). Marca que el pedido se empaco (habilita la salida a Merch Lista); al quedar saldo 0 avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
+						'boletas'    => __( 'Mapear a "Boletas" (slug: boletas). Un pedido 100% de la categoria de eventos (abajo) se desvia aqui al pagarse, en vez de entrar al embudo fisico. No pasa por Preparacion ni Merch Lista (no se despacha por Skydrops). Sin asignar, los pedidos de eventos siguen el flujo normal.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :
@@ -354,6 +380,38 @@ class SLO_Settings {
 							</td>
 						</tr>
 					<?php endforeach; ?>
+				</table>
+
+				<h2><?php esc_html_e( 'Eventos (boletas virtuales)', 'stylelauri-order-flow' ); ?></h2>
+				<p class="description" style="max-width:640px;">
+					<?php esc_html_e( 'Categoria de productos cuyos pedidos son boletas de evento (virtuales, sin despacho). Un pedido cuyos items sean TODOS de esta categoria se desvia al rol "Boletas" al pagarse, saltandose el embudo fisico. Un pedido mixto (evento + merch) sigue el flujo normal.', 'stylelauri-order-flow' ); ?>
+				</p>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="<?php echo esc_attr( self::OPT_EVENTOS_CAT ); ?>"><?php esc_html_e( 'Categoria de eventos', 'stylelauri-order-flow' ); ?></label></th>
+						<td>
+							<?php
+							$current_cat = self::get_eventos_category();
+							$cats        = get_terms(
+								array(
+									'taxonomy'   => 'product_cat',
+									'hide_empty' => false,
+								)
+							);
+							?>
+							<select name="<?php echo esc_attr( self::OPT_EVENTOS_CAT ); ?>" id="<?php echo esc_attr( self::OPT_EVENTOS_CAT ); ?>">
+								<option value="" <?php selected( '', $current_cat ); ?>><?php esc_html_e( '— Sin desvio de eventos —', 'stylelauri-order-flow' ); ?></option>
+								<?php if ( ! is_wp_error( $cats ) ) : ?>
+									<?php foreach ( $cats as $cat ) : ?>
+										<option value="<?php echo esc_attr( $cat->slug ); ?>" <?php selected( $current_cat, $cat->slug ); ?>>
+											<?php echo esc_html( $cat->name ); ?> (<?php echo esc_html( $cat->slug ); ?>)
+										</option>
+									<?php endforeach; ?>
+								<?php endif; ?>
+							</select>
+							<p class="description"><?php esc_html_e( 'Requiere que el rol "Boletas" de arriba este mapeado. Por defecto el plugin busca la categoria con slug "eventos".', 'stylelauri-order-flow' ); ?></p>
+						</td>
+					</tr>
 				</table>
 
 				<?php submit_button(); ?>
