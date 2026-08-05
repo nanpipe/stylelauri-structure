@@ -91,6 +91,15 @@ class SLO_Dispatch_Gate {
 	 * @param WC_Order $order      Pedido.
 	 */
 	public static function route_on_status_change( $order_id, $old_status, $new_status, $order ) {
+		// EXCEPCION EVENTOS (primero): un pedido 100% de la categoria de
+		// eventos son boletas virtuales -- no se empacan ni se despachan.
+		// Si entra a CUALQUIER estado del embudo fisico (Abono Produccion,
+		// Preventa, Preparacion) o a Procesando -- por pago o por un
+		// movimiento manual -- se desvia al rol "boletas" y se detiene.
+		if ( self::maybe_divert_eventos( $order, $new_status ) ) {
+			return;
+		}
+
 		// Registrar que el pedido ya paso por "Listo/Preparacion": es la
 		// senal de que su lote llego y esta fisicamente despachable.
 		$listo_status = SLO_Order_Statuses::get_status( 'listo' );
@@ -126,19 +135,6 @@ class SLO_Dispatch_Gate {
 		}
 
 		if ( ! in_array( $old_status, $payment_origins, true ) ) {
-			return;
-		}
-
-		// EXCEPCION EVENTOS: un pedido 100% de la categoria de eventos son
-		// boletas virtuales -- no se empacan ni se despachan por Skydrops.
-		// Al pagarse se desvian al rol "boletas" y se quedan ahi, fuera del
-		// embudo fisico. Requiere el rol mapeado; si no, siguen el flujo
-		// normal.
-		if ( self::order_is_eventos( $order ) && SLO_Order_Statuses::is_mapped( 'boletas' ) ) {
-			$order->update_status(
-				SLO_Order_Statuses::get_status( 'boletas' ),
-				__( 'Pedido de eventos (boletas virtuales): se desvia fuera del embudo de despacho. No pasa por Preparacion ni Merch Lista.', 'stylelauri-order-flow' )
-			);
 			return;
 		}
 
@@ -299,6 +295,56 @@ class SLO_Dispatch_Gate {
 	 * @param WC_Order $order Pedido.
 	 * @return bool
 	 */
+	/**
+	 * Desvia a "boletas" un pedido de eventos que entra al embudo fisico.
+	 * Cubre tanto el pago (pasarela -> Procesando) como los movimientos
+	 * MANUALES a cualquier estado del embudo (Abono Produccion, Preventa,
+	 * Preparacion). No hace nada si el rol no esta mapeado, si el estado
+	 * destino no es del embudo, o si el pedido no es 100% eventos.
+	 *
+	 * @param WC_Order $order      Pedido.
+	 * @param string   $new_status Estado nuevo (sin wc-).
+	 * @return bool True si desvio (el caller debe cortar).
+	 */
+	private static function maybe_divert_eventos( $order, $new_status ) {
+		if ( ! self::is_enabled() || ! SLO_Order_Statuses::is_mapped( 'boletas' ) ) {
+			return false;
+		}
+
+		$boletas = SLO_Order_Statuses::get_status( 'boletas' );
+
+		// Ya esta en Boletas: nada que hacer (evita recursion).
+		if ( $boletas === $new_status ) {
+			return false;
+		}
+
+		// Solo desviar cuando el destino es el embudo fisico o Procesando.
+		// Otros destinos (terminales, pago, el propio boletas) se respetan.
+		$funnel = array_filter(
+			array(
+				SLO_Order_Statuses::get_status( 'produccion' ),
+				SLO_Order_Statuses::get_status( 'preventa' ),
+				SLO_Order_Statuses::get_status( 'listo' ),
+				'processing',
+			)
+		);
+
+		if ( ! in_array( $new_status, $funnel, true ) ) {
+			return false;
+		}
+
+		if ( ! self::order_is_eventos( $order ) ) {
+			return false;
+		}
+
+		$order->update_status(
+			$boletas,
+			__( 'Pedido de eventos (boletas virtuales): se desvia fuera del embudo de despacho. No pasa por Abono Produccion, Preparacion ni Merch Lista (no se despacha por Skydrops).', 'stylelauri-order-flow' )
+		);
+
+		return true;
+	}
+
 	public static function order_is_eventos( $order ) {
 		if ( ! class_exists( 'SLO_Settings' ) ) {
 			return false;

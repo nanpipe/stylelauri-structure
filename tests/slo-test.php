@@ -521,6 +521,30 @@ $e3 = wc_get_order( $e3->get_id() );
 slo_check( 'eventos: unmapped Boletas role -> normal funnel', 'st-prod' === $e3->get_status(), $e3->get_status() );
 update_option( 'slo_status_boletas', 'wc-st-boletas' );
 
+// MANUAL move into the funnel (En Espera -> Abono Produccion) also diverts
+// to Boletas -- not just the payment path into processing.
+$e4 = wc_create_order();
+$e4->add_product( wc_get_product( $p_boleta ), 1 );
+$e4->set_billing_email( 'event4@stylelauri.test' );
+$e4->calculate_totals();
+$e4->save();
+SLO_Order_Snapshot::recompute_snapshot( $e4->get_id() );
+$e4->update_status( 'on-hold' );
+$e4->update_status( 'st-prod' ); // manual funnel entry (the reported bug)
+$e4 = wc_get_order( $e4->get_id() );
+slo_check( 'eventos: manual move to Abono Produccion diverts to Boletas', 'st-boletas' === $e4->get_status(), $e4->get_status() );
+
+// Manual move straight to Preparacion also diverts.
+$e5 = wc_create_order();
+$e5->add_product( wc_get_product( $p_boleta ), 1 );
+$e5->set_billing_email( 'event5@stylelauri.test' );
+$e5->calculate_totals();
+$e5->save();
+SLO_Order_Snapshot::recompute_snapshot( $e5->get_id() );
+$e5->update_status( 'st-prep' );
+$e5 = wc_get_order( $e5->get_id() );
+slo_check( 'eventos: manual move to Preparacion diverts to Boletas', 'st-boletas' === $e5->get_status(), $e5->get_status() );
+
 // "Sin desvio" (empty category) disables detection even with role mapped.
 update_option( 'slo_eventos_cat', '' );
 slo_check( 'eventos: empty category disables detection', ! SLO_Dispatch_Gate::order_is_eventos( wc_get_order( $e1->get_id() ) ) );
