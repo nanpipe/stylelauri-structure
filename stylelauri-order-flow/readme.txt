@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.11.1
+Stable tag: 1.11.2
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -55,6 +55,9 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 * Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 64 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.11.2 =
+* Ayuda del rol "Boletas" actualizada: el slug recomendado del estado ahora es "boleta-confirmada" (era "boletas"), alineado al estado creado en la tienda. Solo texto -- el rol "boletas" es una clave interna que se puede mapear a cualquier estado; no hay ningun slug cableado. Para enviar los pedidos de eventos a "Boleta confirmada": StyleLauri > Ajustes > rol Boletas -> "Boleta confirmada" (no requiere cambio de codigo).
 
 = 1.11.1 =
 * Fix: el desvio de pedidos de eventos a "Boletas" solo actuaba cuando el pedido aterrizaba en Procesando (la ruta de la pasarela). Un movimiento MANUAL de un pedido de eventos al embudo (ej. En Espera -> Abono Produccion) no se desviaba. Ahora el desvio actua ante CUALQUIER entrada al embudo fisico (Abono Produccion, Preventa, Preparacion) o a Procesando, por pago o a mano.

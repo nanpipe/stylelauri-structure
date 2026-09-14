@@ -358,7 +358,7 @@ class SLO_Settings {
 						'produccion' => __( 'Mapear a "Abono Produccion" (slug: abono-produccion). TODO pago de pasarela entra aqui primero (preventa o stock, con o sin saldo). Aqui se imprime la etiqueta; luego se mueve a mano a Preventa.', 'stylelauri-order-flow' ),
 						'preventa'   => __( 'Mapear a "Preventa" (slug: preventa). Donde espera el pedido a que llegue su lote. El candado de preventa lo mantiene aqui: no puede pasar a Preparacion hasta que la fecha de despacho llegue, el lote se marque Producido, o se use el boton "Liberar a Preparacion" (que solo autoadelanta desde este estado).', 'stylelauri-order-flow' ),
 						'listo'      => __( 'Mapear a "Preparacion" (slug: preparacion). Marca que el pedido se empaco (habilita la salida a Merch Lista); al quedar saldo 0 avanza solo a Merch Lista.', 'stylelauri-order-flow' ),
-						'boletas'    => __( 'Mapear a "Boletas" (slug: boletas). Un pedido 100% de la categoria de eventos (abajo) se desvia aqui al pagarse, en vez de entrar al embudo fisico. No pasa por Preparacion ni Merch Lista (no se despacha por Skydrops). Sin asignar, los pedidos de eventos siguen el flujo normal.', 'stylelauri-order-flow' ),
+						'boletas'    => __( 'Mapear a "Boleta confirmada" (slug: boleta-confirmada). Un pedido 100% de la categoria de eventos (abajo) se desvia aqui -- al pagarse o al moverlo a mano -- en vez de entrar al embudo fisico. No pasa por Abono Produccion, Preparacion ni Merch Lista (no se despacha por Skydrops). Sin asignar, los pedidos de eventos siguen el flujo normal.', 'stylelauri-order-flow' ),
 					);
 
 					foreach ( SLO_Order_Statuses::role_labels() as $role => $label ) :
