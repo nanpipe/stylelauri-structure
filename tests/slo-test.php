@@ -200,7 +200,13 @@ slo_check( 'snapshot locked once completed', $before === SLO_Order_Snapshot::get
 
 // ---- 7. Settings ----
 slo_check( 'settings: default percent 50', 50.0 === SLO_Settings::get_percent() );
+update_option( 'slo_abono_titulo', 'Paga {percent}% / {abono}' );
+$t_abono = SLO_Settings::get_titulo( 100000 );
 slo_check( 'settings: titulo interpolates percent', false !== strpos( SLO_Settings::get_titulo(), '50%' ) );
+slo_check( 'settings: titulo interpolates {abono} amount', false === strpos( $t_abono, '{abono}' ) && false !== strpos( $t_abono, '100' ), $t_abono );
+slo_check( 'settings: {abono} untouched without amount', false !== strpos( SLO_Settings::get_titulo(), '{abono}' ) );
+delete_option( 'slo_abono_titulo' );
+slo_check( 'settings: default titulo uses {abono}', false !== strpos( SLO_Settings::get_titulo( 5 ), 'Separa' ) && false === strpos( SLO_Settings::get_titulo( 5 ), '{abono}' ) );
 update_option( 'slo_status_abono', 'wc-processing' ); // audit: reserved
 slo_check( 'audit: role mapped to processing treated as unmapped', ! SLO_Order_Statuses::is_mapped( 'abono' ) );
 update_option( 'slo_status_abono', 'wc-st-abono' );
@@ -218,6 +224,94 @@ $fee_evil->set_total( -30 );
 $a1->add_item( $fee_evil );
 $a1->save();
 slo_check( 'audit: fee extraction ignores substring-named fees', 50.0 === SLO_Checkout_Abono::extract_descuento( $a1 ) );
+
+// Legacy label (pre-1.12, carried the percent): still read, exact format only.
+$a1b = wc_create_order();
+$a1b->add_product( wc_get_product( $p_jk ), 1 );
+foreach ( array( 'Abono Reserva (pagas 40% hoy)' => -60, 'Abono Reserva (pagas 40% hoy) extra' => -7 ) as $fname => $ftotal ) {
+	$f = new WC_Order_Item_Fee();
+	$f->set_name( $fname );
+	$f->set_total( $ftotal );
+	$a1b->add_item( $f );
+}
+$a1b->save();
+slo_check( 'legacy fee label (any %) still extracted, exact only', 60.0 === SLO_Checkout_Abono::extract_descuento( $a1b ), (string) SLO_Checkout_Abono::extract_descuento( $a1b ) );
+slo_check( 'new fee label has no percent', false === strpos( SLO_Checkout_Abono::fee_label(), '%' ) );
+
+// ---- 8b. Abono fijo por producto ----
+$p_fijo = slo_make_product( 'Chaqueta fija test', 145000 );
+wp_set_object_terms( $p_fijo, array( $jk_id ), 'lote_preventa' );
+update_post_meta( $p_fijo, SLO_Checkout_Abono::META_ABONO_FIJO, '100000' );
+slo_check( 'fijo: 1 unit pays fixed amount today', 100000.0 === SLO_Checkout_Abono::item_abono_hoy( $p_fijo, 1, 145000 ) );
+slo_check( 'fijo: 2 units pay 2 x fixed', 200000.0 === SLO_Checkout_Abono::item_abono_hoy( $p_fijo, 2, 290000 ) );
+slo_check( 'fijo: amount >= price -> line paid in full', 90000.0 === SLO_Checkout_Abono::item_abono_hoy( $p_fijo, 1, 90000 ) );
+slo_check( 'no fijo: falls back to default percent', 50.0 === SLO_Checkout_Abono::item_abono_hoy( $p_jk, 1, 100 ) );
+
+// parse_monto: COP (0 decimals) treats any separator as thousands.
+add_filter( 'wc_get_price_decimals', '__return_zero' );
+slo_check( 'parse_monto: "100.000" = 100000 with 0 decimals', 100000.0 === SLO_Checkout_Abono::parse_monto( '100.000' ) );
+slo_check( 'parse_monto: "$ 75,000" = 75000 with 0 decimals', 75000.0 === SLO_Checkout_Abono::parse_monto( '$ 75,000' ) );
+slo_check( 'parse_monto: empty/garbage = 0', 0.0 === SLO_Checkout_Abono::parse_monto( '' ) && 0.0 === SLO_Checkout_Abono::parse_monto( 'abc' ) );
+remove_filter( 'wc_get_price_decimals', '__return_zero' );
+
+// Variable product: different variation prices, SAME fixed abono (on parent).
+$pv = new WC_Product_Variable();
+$pv->set_name( 'Hoodie variable test' );
+$attr = new WC_Product_Attribute();
+$attr->set_name( 'talla' );
+$attr->set_options( array( 'S', 'XL' ) );
+$attr->set_visible( true );
+$attr->set_variation( true );
+$pv->set_attributes( array( $attr ) );
+$pv->set_status( 'publish' );
+$pv->save();
+$var_ids = array();
+foreach ( array( 'S' => 145000, 'XL' => 150000 ) as $talla => $precio ) {
+	$v = new WC_Product_Variation();
+	$v->set_parent_id( $pv->get_id() );
+	$v->set_attributes( array( 'talla' => $talla ) );
+	$v->set_regular_price( $precio );
+	$v->set_status( 'publish' );
+	$v->save();
+	$var_ids[ $talla ] = $v->get_id();
+}
+wp_set_object_terms( $pv->get_id(), array( $jk_id ), 'lote_preventa' );
+update_post_meta( $pv->get_id(), SLO_Checkout_Abono::META_ABONO_FIJO, '100000' );
+
+// Real cart: S x2 (290000) + XL x1 (150000) + percent product (100) + stock (10).
+if ( null === WC()->session ) {
+	WC()->initialize_session();
+}
+if ( null === WC()->cart ) {
+	WC()->initialize_cart();
+}
+WC()->cart->empty_cart();
+WC()->cart->add_to_cart( $pv->get_id(), 2, $var_ids['S'], array( 'attribute_talla' => 'S' ) );
+WC()->cart->add_to_cart( $pv->get_id(), 1, $var_ids['XL'], array( 'attribute_talla' => 'XL' ) );
+WC()->cart->add_to_cart( $p_jk, 1 );
+WC()->cart->add_to_cart( $p_stock, 1 );
+$bd = SLO_Checkout_Abono::cart_abono_breakdown();
+// hoy = 100000*2 + 100000 + 50 ; diferido = (290000-200000) + (150000-100000) + 50
+slo_check( 'cart: variations share fixed abono x qty (hoy)', 300050.0 === $bd['hoy'], (string) $bd['hoy'] );
+slo_check( 'cart: deferred = price - abono, stock excluded', 140050.0 === $bd['diferido'], (string) $bd['diferido'] );
+
+WC()->session->set( SLO_Checkout_Abono::SESSION_KEY, '1' );
+WC()->cart->calculate_totals();
+$cart_fee = 0.0;
+foreach ( WC()->cart->get_fees() as $cf ) {
+	if ( SLO_Checkout_Abono::fee_label() === $cf->name ) {
+		$cart_fee += (float) $cf->amount;
+	}
+}
+slo_check( 'cart: abono fee = -deferred', -140050.0 === $cart_fee, (string) $cart_fee );
+
+// Fixed abono >= price on every preventa line -> nothing to defer.
+WC()->cart->empty_cart();
+update_post_meta( $p_fijo, SLO_Checkout_Abono::META_ABONO_FIJO, '200000' );
+WC()->cart->add_to_cart( $p_fijo, 1 );
+slo_check( 'cart: fixed >= price -> no deferred amount', 0.0 === SLO_Checkout_Abono::cart_abono_breakdown()['diferido'] );
+WC()->cart->empty_cart();
+WC()->session->set( SLO_Checkout_Abono::SESSION_KEY, '0' );
 
 // ---- 9. Manual cuota input: strict format + bounds (audit) ----
 $a2 = wc_create_order();

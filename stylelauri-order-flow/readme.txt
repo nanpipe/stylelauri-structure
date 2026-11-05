@@ -3,7 +3,7 @@ Requires at least: 6.4
 Tested up to: 6.9
 Requires PHP: 7.4
 Requires plugins: woocommerce
-Stable tag: 1.11.3
+Stable tag: 1.12.0
 License: GPLv2 or later
 
 Organiza el ciclo de vida de pedidos de StyleLauri.com: lotes de preventa, fechas de despacho, saldos por abono y puerta de despacho para Skydrops. Los estados y los correos los administra la tienda (plugin de estados + YAYMail); este plugin aporta los datos y los automatismos.
@@ -26,7 +26,7 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 
 6. **Datos para los correos (sin correos propios)**. Los correos los maneja la tienda (plugin de estados + YAYMail). Este plugin aporta: filas de abonos y saldo pendiente en la tabla de totales de TODO correo de WooCommerce, y metadatos insertables en plantillas (_slo_saldo_pendiente, _slo_monto_abonado, _slo_fecha_despacho, _slo_guia_envio, _slo_lotes_pedido). Ademas expone el hook 'slo_saldo_reminder' cuando un pedido entra a Preparacion con saldo.
 
-7. **Abono Reserva en el checkout**. Si el carrito tiene productos de preventa (con lote asignado), aparece un checkbox para pagar solo un porcentaje HOY (configurable, por defecto 50%). El resto queda como saldo pendiente en el pedido: el pedido pasa solo a "Abono parcial" al confirmarse el pago, el saldo alimenta el guard de "Enviado" y el recordatorio, y el email nativo de "Procesando" se suprime para no duplicar avisos. Requiere el checkout clasico (shortcode); el Checkout Block no ejecuta estos hooks.
+7. **Abono Reserva en el checkout**. Si el carrito tiene productos de preventa (con lote asignado), aparece un checkbox para pagar solo el abono HOY: un monto fijo por unidad si el producto tiene "Abono Reserva fijo" en su ficha (igual para todas las variaciones), o si no el porcentaje por defecto (configurable, 50%). El resto queda como saldo pendiente en el pedido: el pedido pasa solo a "Abono parcial" al confirmarse el pago, el saldo alimenta el guard de "Enviado" y el recordatorio, y el email nativo de "Procesando" se suprime para no duplicar avisos. Requiere el checkout clasico (shortcode); el Checkout Block no ejecuta estos hooks.
 
 8. **Menu propio "StyleLauri"** en el admin: Ajustes (porcentaje y textos del abono), acceso directo a Lotes de preventa y al listado de Pedidos.
 
@@ -52,9 +52,15 @@ Este plugin resuelve el problema de raiz identificado en la operacion de StyleLa
 
 * Exportador: agregar las columnas de lote/fecha/saldo al exportador propio de la tienda usando `SLO_Order_Snapshot::get_order_lotes()`, `get_order_fecha_despacho()` y `SLO_Order_Balance::get_saldo_pendiente()` (o el meta `_slo_saldo_pendiente`).
 * Politica de carrito mixto (stock inmediato + preventa en el mismo pedido): el plugin ya soporta el escenario tecnicamente (fecha gobernante = la mas tardia), pero falta decidir si se permite mezclar en el carrito o se separa en el checkout.
-* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 64 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
+* Validado en WordPress local (wp-demo, WooCommerce + PHP 8.3) con suite de 96 checks. Prueba visual del listado y checkout real en staging de Hostinger antes de produccion.
 
 == Changelog ==
+
+= 1.12.0 =
+* Nuevo: "Abono Reserva fijo" por producto (ficha del producto > General). Monto por unidad que se paga hoy al separar, el mismo para todas las variaciones aunque tengan precios distintos (ej. prenda de 145.000 con abono de 100.000). 2 unidades = 2 x abono. Si el abono alcanza o supera el precio, esa linea se paga completa. Productos sin monto fijo siguen usando el porcentaje de Ajustes (ahora "Porcentaje por defecto").
+* Nuevo placeholder {abono} en el titulo/texto del checkbox: el monto que se paga hoy por la preventa del carrito. Textos por defecto actualizados a {abono}; {percent} sigue funcionando.
+* La linea del fee ahora se llama "Abono Reserva (saldo por pagar)" (antes llevaba el %). Los pedidos viejos con "Abono Reserva (pagas X% hoy)" se siguen leyendo -- de paso se corrige que cambiar el % en Ajustes dejaba de reconocer el fee de pedidos anteriores.
+* El checkbox no aparece si no hay nada que diferir (abono fijo >= precio en toda la preventa).
 
 = 1.11.3 =
 * Revertido: el slug recomendado del estado del rol "Boletas" vuelve a ser "boletas" (la tienda usa ese estado). Se conserva la aclaracion de que "boletas" es solo la clave interna del rol -- se puede mapear a cualquier estado -- y la redaccion de la ayuda (el desvio ocurre por pago o al mover el pedido a mano).

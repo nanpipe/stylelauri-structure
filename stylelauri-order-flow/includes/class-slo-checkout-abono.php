@@ -2,9 +2,15 @@
 /**
  * Abono Reserva en el checkout (integracion del snippet original).
  *
- * El cliente puede pagar solo un porcentaje (configurable en
- * StyleLauri > Ajustes) del subtotal de los productos de PREVENTA;
+ * El cliente puede pagar HOY solo el abono de los productos de PREVENTA;
  * el resto queda registrado como saldo pendiente en el pedido.
+ *
+ * Cuanto se paga hoy, por linea de preventa:
+ *  - Producto con "Abono Reserva fijo" (meta _slo_abono_fijo en el
+ *    producto padre): monto fijo x cantidad, el mismo para todas las
+ *    variaciones aunque cada variacion tenga otro precio. Si el fijo
+ *    alcanza o supera el precio, esa linea se paga completa.
+ *  - Producto sin monto fijo: el porcentaje de StyleLauri > Ajustes.
  *
  * Cambios respecto al snippet suelto que vivia en staging:
  *
@@ -40,8 +46,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class SLO_Checkout_Abono {
 
-	const SESSION_KEY = 'slo_abono_reserva';
-	const META_FLAG   = '_slo_abono_checkout';
+	const SESSION_KEY     = 'slo_abono_reserva';
+	const META_FLAG       = '_slo_abono_checkout';
+	const META_ABONO_FIJO = '_slo_abono_fijo';
+
+	/**
+	 * Etiqueta del fee antes de v1.12 ("Abono Reserva (pagas 50% hoy)").
+	 * Match EXACTO de ese formato -- no substring -- para que los pedidos
+	 * viejos sigan leyendo su saldo, cualquiera que fuera el porcentaje.
+	 */
+	const FEE_LABEL_LEGACY_RE = '/^Abono Reserva \(pagas \d+(?:\.\d+)?% hoy\)$/';
 
 	public static function init() {
 		// Checkbox en el checkout, antes de los metodos de pago.
@@ -64,6 +78,144 @@ class SLO_Checkout_Abono {
 
 		// No mandar el email nativo de "Procesando" cuando el de Abono ya aplica.
 		add_filter( 'woocommerce_email_enabled_customer_processing_order', array( __CLASS__, 'suppress_processing_email' ), 10, 2 );
+
+		// Campo "Abono Reserva fijo" en la ficha del producto (pestana
+		// General, visible tambien en productos variables).
+		add_action( 'woocommerce_product_options_general_product_data', array( __CLASS__, 'render_product_field' ) );
+		add_action( 'woocommerce_admin_process_product_object', array( __CLASS__, 'save_product_field' ) );
+	}
+
+	// ------------------------------------------------------------------
+	// Monto del abono por producto
+	// ------------------------------------------------------------------
+
+	/**
+	 * Abono fijo por unidad del producto (el padre, si es variable).
+	 *
+	 * @param int $product_id ID del producto padre.
+	 * @return float 0 si no tiene monto fijo (usa el porcentaje).
+	 */
+	public static function get_abono_fijo( $product_id ) {
+		$monto = (float) get_post_meta( (int) $product_id, self::META_ABONO_FIJO, true );
+		return $monto > 0 ? $monto : 0.0;
+	}
+
+	/**
+	 * Lo que el cliente paga HOY por una linea de preventa.
+	 *
+	 * @param int   $product_id    ID del producto padre.
+	 * @param int   $qty           Cantidad.
+	 * @param float $line_subtotal Subtotal de la linea.
+	 * @return float Entre 0 y $line_subtotal.
+	 */
+	public static function item_abono_hoy( $product_id, $qty, $line_subtotal ) {
+		$line_subtotal = max( 0.0, (float) $line_subtotal );
+		$fijo          = self::get_abono_fijo( $product_id );
+
+		if ( $fijo > 0 ) {
+			return min( $line_subtotal, $fijo * max( 1, (int) $qty ) );
+		}
+
+		return $line_subtotal * SLO_Settings::get_percent() / 100;
+	}
+
+	/**
+	 * Abono del carrito: cuanto se paga hoy y cuanto queda diferido.
+	 * Solo lineas de preventa; el stock se paga completo.
+	 *
+	 * @return array{hoy: float, diferido: float}
+	 */
+	public static function cart_abono_breakdown() {
+		$out = array(
+			'hoy'      => 0.0,
+			'diferido' => 0.0,
+		);
+
+		if ( ! function_exists( 'WC' ) || ! WC()->cart ) {
+			return $out;
+		}
+
+		foreach ( WC()->cart->get_cart() as $item ) {
+			if ( ! SLO_Taxonomy::is_preventa_product( $item['product_id'] ) ) {
+				continue;
+			}
+
+			$subtotal = max( 0.0, (float) $item['line_subtotal'] );
+			$hoy      = self::item_abono_hoy( $item['product_id'], $item['quantity'], $subtotal );
+
+			$out['hoy']      += $hoy;
+			$out['diferido'] += $subtotal - $hoy;
+		}
+
+		$decimals        = wc_get_price_decimals();
+		$out['hoy']      = round( $out['hoy'], $decimals );
+		$out['diferido'] = round( $out['diferido'], $decimals );
+
+		return $out;
+	}
+
+	/**
+	 * Convierte lo que escribe el admin en un monto. Con 0 decimales (COP)
+	 * cualquier separador es de miles: "100.000", "100,000" y "100000"
+	 * valen 100000.
+	 *
+	 * @param string $raw Valor del campo.
+	 * @return float 0 si vacio o invalido.
+	 */
+	public static function parse_monto( $raw ) {
+		$raw = trim( (string) $raw );
+
+		if ( '' === $raw ) {
+			return 0.0;
+		}
+
+		if ( 0 === wc_get_price_decimals() ) {
+			$digits = preg_replace( '/[^0-9]/', '', $raw );
+			return '' === $digits ? 0.0 : (float) $digits;
+		}
+
+		$raw = str_replace( array( ' ', wc_get_price_thousand_separator() ), '', $raw );
+		$raw = str_replace( wc_get_price_decimal_separator(), '.', $raw );
+
+		return preg_match( '/^\d+(\.\d+)?$/', $raw ) ? (float) $raw : 0.0;
+	}
+
+	/**
+	 * Campo "Abono Reserva fijo" en la pestana General del producto.
+	 */
+	public static function render_product_field() {
+		echo '<div class="options_group">';
+		woocommerce_wp_text_input(
+			array(
+				'id'          => self::META_ABONO_FIJO,
+				/* translators: %s: currency symbol */
+				'label'       => sprintf( __( 'Abono Reserva fijo (%s)', 'stylelauri-order-flow' ), get_woocommerce_currency_symbol() ),
+				'data_type'   => 'price',
+				'desc_tip'    => true,
+				'description' => __( 'Monto por UNIDAD que el cliente paga hoy al separar con Abono Reserva. Es el mismo para todas las variaciones, aunque cada una tenga otro precio. Vacio = usa el porcentaje de StyleLauri > Ajustes. Solo aplica si el producto tiene lote de preventa.', 'stylelauri-order-flow' ),
+			)
+		);
+		echo '</div>';
+	}
+
+	/**
+	 * Guarda el campo. WooCommerce ya verifico nonce y permisos antes de
+	 * disparar woocommerce_admin_process_product_object.
+	 *
+	 * @param WC_Product $product Producto en guardado.
+	 */
+	public static function save_product_field( $product ) {
+		if ( ! isset( $_POST[ self::META_ABONO_FIJO ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			return;
+		}
+
+		$monto = self::parse_monto( sanitize_text_field( wp_unslash( $_POST[ self::META_ABONO_FIJO ] ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+		if ( $monto > 0 ) {
+			$product->update_meta_data( self::META_ABONO_FIJO, wc_format_decimal( $monto ) );
+		} else {
+			$product->delete_meta_data( self::META_ABONO_FIJO );
+		}
 	}
 
 	/**
@@ -87,23 +239,6 @@ class SLO_Checkout_Abono {
 	}
 
 	/**
-	 * Subtotal de los items de preventa del carrito.
-	 *
-	 * @return float
-	 */
-	private static function cart_preventa_subtotal() {
-		$subtotal = 0.0;
-
-		foreach ( WC()->cart->get_cart() as $item ) {
-			if ( SLO_Taxonomy::is_preventa_product( $item['product_id'] ) ) {
-				$subtotal += (float) $item['line_subtotal'];
-			}
-		}
-
-		return $subtotal;
-	}
-
-	/**
 	 * ¿El abono esta activo en la sesion actual?
 	 *
 	 * @return bool
@@ -120,6 +255,12 @@ class SLO_Checkout_Abono {
 		if ( ! SLO_Settings::is_abono_enabled() || ! self::cart_has_preventa() ) {
 			return;
 		}
+
+		// Nada que diferir (ej. abono fijo >= precio): el checkbox sobra.
+		$abono = self::cart_abono_breakdown();
+		if ( $abono['diferido'] <= 0 ) {
+			return;
+		}
 		?>
 		<div id="slo-abono-wrap" style="margin:20px 0;padding:18px 20px;border:2.5px solid #D4537E;border-radius:12px;background:#FEF0F5;cursor:pointer;">
 			<label style="display:flex;align-items:flex-start;gap:14px;cursor:pointer;">
@@ -133,10 +274,10 @@ class SLO_Checkout_Abono {
 				/>
 				<span>
 					<strong style="font-size:17px;color:#72243E;display:block;margin-bottom:4px;">
-						<?php echo esc_html( SLO_Settings::get_titulo() ); ?>
+						<?php echo esc_html( SLO_Settings::get_titulo( $abono['hoy'] ) ); ?>
 					</strong>
 					<span style="font-size:13px;color:#993556;line-height:1.5;display:block;">
-						<?php echo esc_html( SLO_Settings::get_texto() ); ?>
+						<?php echo esc_html( SLO_Settings::get_texto( $abono['hoy'] ) ); ?>
 					</span>
 				</span>
 			</label>
@@ -145,9 +286,9 @@ class SLO_Checkout_Abono {
 	}
 
 	/**
-	 * Aplica el fee negativo del abono sobre el subtotal de preventa.
-	 * El cliente paga hoy el {percent}% de la preventa; el fee resta el
-	 * complemento (lo que queda como saldo).
+	 * Aplica el fee negativo del abono sobre las lineas de preventa.
+	 * El cliente paga hoy el abono (fijo por producto o porcentaje); el
+	 * fee resta el resto (lo que queda como saldo).
 	 *
 	 * @param WC_Cart $cart Carrito en calculo.
 	 */
@@ -180,14 +321,11 @@ class SLO_Checkout_Abono {
 			return;
 		}
 
-		$subtotal_preventa = self::cart_preventa_subtotal();
+		$descuento = self::cart_abono_breakdown()['diferido'];
 
-		if ( $subtotal_preventa <= 0 ) {
+		if ( $descuento <= 0 ) {
 			return;
 		}
-
-		$percent   = SLO_Settings::get_percent();
-		$descuento = $subtotal_preventa * ( 1 - $percent / 100 );
 
 		$cart->add_fee( self::fee_label(), -$descuento, false );
 	}
@@ -198,14 +336,24 @@ class SLO_Checkout_Abono {
 	 * substring permitiria que otro fee (de otro plugin, con texto
 	 * controlable) contaminara el descuento registrado. [Auditoria]
 	 *
+	 * Ya no lleva el porcentaje: con abonos fijos por producto no hay un
+	 * solo %, y asi cambiar el % en Ajustes no "pierde" pedidos viejos.
+	 *
 	 * @return string
 	 */
 	public static function fee_label() {
-		return sprintf(
-			/* translators: %s: percent paid today */
-			__( 'Abono Reserva (pagas %s%% hoy)', 'stylelauri-order-flow' ),
-			SLO_Settings::format_percent()
-		);
+		return __( 'Abono Reserva (saldo por pagar)', 'stylelauri-order-flow' );
+	}
+
+	/**
+	 * ¿Este nombre de fee es el del abono? Etiqueta actual o la de antes
+	 * de v1.12; siempre match exacto.
+	 *
+	 * @param string $name Nombre del fee.
+	 * @return bool
+	 */
+	public static function is_abono_fee_name( $name ) {
+		return self::fee_label() === $name || 1 === preg_match( self::FEE_LABEL_LEGACY_RE, (string) $name );
 	}
 
 	/**
@@ -216,11 +364,10 @@ class SLO_Checkout_Abono {
 	 * @return float Monto diferido (positivo), 0 si no hay fee de abono.
 	 */
 	public static function extract_descuento( $order ) {
-		$expected  = self::fee_label();
 		$descuento = 0.0;
 
 		foreach ( $order->get_fees() as $fee ) {
-			if ( $fee->get_name() === $expected ) {
+			if ( self::is_abono_fee_name( $fee->get_name() ) ) {
 				$descuento += -(float) $fee->get_total();
 			}
 		}

@@ -3,7 +3,8 @@
  * Menu propio del plugin + ajustes del Abono Reserva.
  *
  * Menu top-level "StyleLauri" con:
- *  - Ajustes: porcentaje del abono y textos del checkbox del checkout.
+ *  - Ajustes: porcentaje por defecto del abono y textos del checkbox del
+ *    checkout (el monto fijo por producto vive en la ficha del producto).
  *  - Lotes de preventa: acceso directo a la taxonomia (sin pasar por Productos).
  *  - Pedidos: acceso directo al listado de pedidos de WooCommerce.
  *
@@ -67,34 +68,55 @@ class SLO_Settings {
 	}
 
 	/**
-	 * Titulo del checkbox en el checkout. {percent} se reemplaza por el
-	 * porcentaje configurado.
+	 * Titulo del checkbox en el checkout. Placeholders: {abono} (monto que
+	 * se paga hoy por la preventa del carrito) y {percent} (porcentaje por
+	 * defecto).
 	 *
+	 * @param float|null $abono_hoy Monto de hoy; null deja {abono} sin tocar.
 	 * @return string
 	 */
-	public static function get_titulo() {
+	public static function get_titulo( $abono_hoy = null ) {
 		$titulo = get_option( self::OPT_ABONO_TITULO, '' );
 
 		if ( '' === trim( (string) $titulo ) ) {
-			$titulo = __( '💜 Abono Reserva — Paga solo el {percent}% hoy', 'stylelauri-order-flow' );
+			$titulo = __( '💜 Abono Reserva — Separa tu preventa con {abono}', 'stylelauri-order-flow' );
 		}
 
-		return str_replace( '{percent}', self::format_percent(), $titulo );
+		return self::interpolate( $titulo, $abono_hoy );
 	}
 
 	/**
-	 * Texto secundario del checkbox.
+	 * Texto secundario del checkbox. Mismos placeholders que el titulo.
 	 *
+	 * @param float|null $abono_hoy Monto de hoy; null deja {abono} sin tocar.
 	 * @return string
 	 */
-	public static function get_texto() {
+	public static function get_texto( $abono_hoy = null ) {
 		$texto = get_option( self::OPT_ABONO_TEXTO, '' );
 
 		if ( '' === trim( (string) $texto ) ) {
-			$texto = __( 'Separa tu producto pagando el {percent}% del valor. El saldo se cobra antes del despacho.', 'stylelauri-order-flow' );
+			$texto = __( 'Paga hoy solo el abono de tus productos de preventa. El saldo se cobra antes del despacho.', 'stylelauri-order-flow' );
 		}
 
-		return str_replace( '{percent}', self::format_percent(), $texto );
+		return self::interpolate( $texto, $abono_hoy );
+	}
+
+	/**
+	 * Reemplaza {percent} y {abono} (en texto plano, ej. "$100.000").
+	 *
+	 * @param string     $text      Texto con placeholders.
+	 * @param float|null $abono_hoy Monto de hoy.
+	 * @return string
+	 */
+	private static function interpolate( $text, $abono_hoy ) {
+		$text = str_replace( '{percent}', self::format_percent(), $text );
+
+		if ( null !== $abono_hoy && function_exists( 'wc_price' ) ) {
+			$monto = html_entity_decode( wp_strip_all_tags( wc_price( $abono_hoy ) ), ENT_QUOTES, 'UTF-8' );
+			$text  = str_replace( '{abono}', $monto, $text );
+		}
+
+		return $text;
 	}
 
 	/**
@@ -283,6 +305,7 @@ class SLO_Settings {
 				<h2><?php esc_html_e( 'Abono Reserva (checkout)', 'stylelauri-order-flow' ); ?></h2>
 				<p class="description">
 					<?php esc_html_e( 'El checkbox de abono solo aparece cuando el carrito tiene al menos un producto con lote de preventa asignado. Los productos de stock inmediato nunca lo muestran.', 'stylelauri-order-flow' ); ?>
+					<?php esc_html_e( 'Cada producto puede tener su propio "Abono Reserva fijo" (ficha del producto > General): se cobra ese monto por unidad, igual para todas las variaciones. Los productos sin monto fijo usan el porcentaje por defecto.', 'stylelauri-order-flow' ); ?>
 				</p>
 
 				<table class="form-table" role="presentation">
@@ -296,7 +319,7 @@ class SLO_Settings {
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="slo_abono_percent"><?php esc_html_e( 'Porcentaje del abono (%)', 'stylelauri-order-flow' ); ?></label></th>
+						<th scope="row"><label for="slo_abono_percent"><?php esc_html_e( 'Porcentaje por defecto (%)', 'stylelauri-order-flow' ); ?></label></th>
 						<td>
 							<input
 								type="number"
@@ -307,7 +330,7 @@ class SLO_Settings {
 								max="99"
 								step="0.5"
 							/>
-							<p class="description"><?php esc_html_e( 'Lo que el cliente paga HOY sobre el subtotal de los productos de preventa. El resto queda como saldo pendiente en el pedido.', 'stylelauri-order-flow' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Lo que el cliente paga HOY sobre el precio de los productos de preventa que NO tienen "Abono Reserva fijo". El resto queda como saldo pendiente en el pedido.', 'stylelauri-order-flow' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -319,7 +342,7 @@ class SLO_Settings {
 								name="<?php echo esc_attr( self::OPT_ABONO_TITULO ); ?>"
 								value="<?php echo esc_attr( get_option( self::OPT_ABONO_TITULO, '' ) ); ?>"
 								class="large-text"
-								placeholder="<?php esc_attr_e( '💜 Abono Reserva — Paga solo el {percent}% hoy', 'stylelauri-order-flow' ); ?>"
+								placeholder="<?php esc_attr_e( '💜 Abono Reserva — Separa tu preventa con {abono}', 'stylelauri-order-flow' ); ?>"
 							/>
 						</td>
 					</tr>
@@ -332,9 +355,9 @@ class SLO_Settings {
 								name="<?php echo esc_attr( self::OPT_ABONO_TEXTO ); ?>"
 								value="<?php echo esc_attr( get_option( self::OPT_ABONO_TEXTO, '' ) ); ?>"
 								class="large-text"
-								placeholder="<?php esc_attr_e( 'Separa tu producto pagando el {percent}% del valor. El saldo se cobra antes del despacho.', 'stylelauri-order-flow' ); ?>"
+								placeholder="<?php esc_attr_e( 'Paga hoy solo el abono de tus productos de preventa. El saldo se cobra antes del despacho.', 'stylelauri-order-flow' ); ?>"
 							/>
-							<p class="description"><?php esc_html_e( 'En ambos textos, {percent} se reemplaza por el porcentaje configurado.', 'stylelauri-order-flow' ); ?></p>
+							<p class="description"><?php esc_html_e( 'En ambos textos: {abono} = lo que el cliente paga hoy por los productos de preventa del carrito (ej. $100.000; suma montos fijos y porcentaje). {percent} = el porcentaje por defecto -- si usas montos fijos, mejor {abono}.', 'stylelauri-order-flow' ); ?></p>
 						</td>
 					</tr>
 				</table>
